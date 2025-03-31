@@ -1,6 +1,4 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -8,288 +6,41 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve frontend/
 
-// Configurar multer para subir fotos
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = path.join(__dirname, 'uploads');
-        fs.mkdirSync(uploadDir, { recursive: true }); // Crea uploads/ si no existe
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
-});
-const upload = multer({ storage });
-
-// Conectar a la base de datos
-const db = new sqlite3.Database(path.join(__dirname, 'database.db'), (err) => {
-    if (err) console.error('Error al conectar a la base de datos:', err);
-    else console.log('Conectado a la base de datos SQLite');
-});
-
-// Crear tablas y manejar migración
-db.serialize(() => {
-    db.all("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err, rows) => {
-        if (err) {
-            console.error('Error al verificar existencia de tabla:', err);
-            return;
-        }
-
-        if (rows.length === 0) {
-            console.log('Creando tabla users desde cero...');
-            db.run(`
-                CREATE TABLE users (
-                    id TEXT PRIMARY KEY,
-                    username TEXT UNIQUE,
-                    password TEXT,
-                    displayName TEXT,
-                    profilePicture TEXT
-                )
-            `, (err) => {
-                if (err) console.error('Error al crear tabla users:', err);
-                else console.log('Tabla users creada');
-            });
-        } else {
-            db.all("PRAGMA table_info(users)", (err, columns) => {
-                if (err) {
-                    console.error('Error al verificar columnas:', err);
-                    return;
-                }
-                const hasDisplayName = columns.some(col => col.name === 'displayName');
-                const hasProfilePicture = columns.some(col => col.name === 'profilePicture');
-
-                if (!hasDisplayName || !hasProfilePicture) {
-                    console.log('Migrando tabla users...');
-                    db.run('ALTER TABLE users RENAME TO users_old', (err) => {
-                        if (err) console.error('Error al renombrar tabla:', err);
-                    });
-                    db.run(`
-                        CREATE TABLE users (
-                            id TEXT PRIMARY KEY,
-                            username TEXT UNIQUE,
-                            password TEXT,
-                            displayName TEXT,
-                            profilePicture TEXT
-                        )
-                    `, (err) => {
-                        if (err) console.error('Error al crear nueva tabla:', err);
-                    });
-                    db.run(`
-                        INSERT INTO users (id, username, password)
-                        SELECT id, username, password FROM users_old
-                    `, (err) => {
-                        if (err) console.error('Error al migrar datos:', err);
-                    });
-                    db.run('UPDATE users SET displayName = username WHERE displayName IS NULL', (err) => {
-                        if (err) console.error('Error al actualizar displayName:', err);
-                    });
-                    db.run('DROP TABLE users_old', (err) => {
-                        if (err) console.error('Error al eliminar tabla antigua:', err);
-                        else console.log('Migración completada');
-                    });
-                } else {
-                    console.log('Tabla users ya tiene las columnas necesarias');
-                }
-            });
-        }
-    });
-
-    db.run(`
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            senderId TEXT,
-            recipientId TEXT,
-            content TEXT,
-            timestamp TEXT,
-            FOREIGN KEY (senderId) REFERENCES users(id),
-            FOREIGN KEY (recipientId) REFERENCES users(id)
-        )
-    `);
-    db.run(`
-        CREATE TABLE IF NOT EXISTS contacts (
-            userId TEXT,
-            contactId TEXT,
-            FOREIGN KEY (userId) REFERENCES users(id),
-            FOREIGN KEY (contactId) REFERENCES users(id),
-            PRIMARY KEY (userId, contactId)
-        )
-    `);
-});
-
-// Ruta raíz para servir index.html desde frontend/
+// Ruta raíz para servir index.html
 app.get('/', (req, res) => {
     const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
-    console.log('Intentando servir:', indexPath); // Depuración
+    console.log('Directorio actual (__dirname):', __dirname);
+    console.log('Intentando servir:', indexPath);
     if (fs.existsSync(indexPath)) {
+        console.log('Archivo encontrado, sirviendo index.html');
         res.sendFile(indexPath);
     } else {
-        console.error('No se encontró index.html en:', indexPath);
-        res.status(404).send('Error: No se encontró index.html en frontend/. Revisa la estructura del proyecto.');
+        console.error('Archivo no encontrado en:', indexPath);
+        res.status(404).send('Error: No se encontró index.html en frontend/. Revisa la estructura o el despliegue.');
     }
 });
 
-// Ruta de prueba para verificar que el servidor funciona
+// Ruta de prueba
 app.get('/api/test', (req, res) => {
-    res.json({ message: '¡El servidor está funcionando!' });
+    res.json({ message: '¡El servidor está funcionando!', dir: __dirname });
 });
 
-// Registro de usuario
-app.post('/api/register', (req, res) => {
-    const { username, password } = req.body;
-    console.log('POST /api/register:', req.body);
-    if (!username || !password) {
-        return res.status(400).json({ message: 'Faltan username o password' });
-    }
-    const stmt = db.prepare('INSERT INTO users (id, username, password, displayName) VALUES (?, ?, ?, ?)');
-    stmt.run(username, username, password, username, (err) => {
-        if (err) {
-            console.error('Error al registrar:', err);
-            return res.status(400).json({ message: 'El usuario ya existe' });
-        }
-        res.json({ message: 'Registro exitoso', userId: username });
-    });
-    stmt.finalize();
-});
-
-// Inicio de sesión
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    console.log('POST /api/login:', req.body);
-    if (!username || !password) {
-        return res.status(400).json({ message: 'Faltan username o password' });
-    }
-    db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, row) => {
-        if (err) {
-            console.error('Error al buscar usuario:', err);
-            return res.status(500).json({ message: 'Error en el servidor' });
-        }
-        if (!row) return res.status(401).json({ message: 'Credenciales inválidas' });
-        res.json({ 
-            message: 'Inicio de sesión exitoso', 
-            userId: row.id, 
-            username: row.username, 
-            displayName: row.displayName, 
-            profilePicture: row.profilePicture 
-        });
-    });
-});
-
-// Actualizar perfil
-app.post('/api/profile', upload.single('profilePicture'), (req, res) => {
-    console.log('POST /api/profile:', req.body, req.file);
-    const { userId, displayName } = req.body;
-    if (!userId) return res.status(400).json({ message: 'Falta userId' });
-
-    const updates = [];
-    const params = [];
-    if (displayName) {
-        updates.push('displayName = ?');
-        params.push(displayName);
-    }
-    if (req.file) {
-        updates.push('profilePicture = ?');
-        params.push(`/uploads/${req.file.filename}`);
-    }
-    if (updates.length === 0) return res.status(400).json({ message: 'No hay datos para actualizar' });
-
-    params.push(userId);
-    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
-    console.log('Ejecutando consulta:', query, params);
-    db.run(query, params, (err) => {
-        if (err) {
-            console.error('Error al actualizar perfil:', err);
-            return res.status(500).json({ message: 'Error al actualizar perfil', error: err.message });
-        }
-        res.json({ message: 'Perfil actualizado' });
-    });
-});
-
-// Agregar contacto
-app.post('/api/contacts', (req, res) => {
-    const { userId, contactId } = req.body;
-    console.log('POST /api/contacts:', req.body);
-    if (!userId || !contactId) return res.status(400).json({ message: 'Faltan userId o contactId' });
-    db.get('SELECT * FROM users WHERE id = ?', [contactId], (err, row) => {
-        if (err) {
-            console.error('Error al buscar contacto:', err);
-            return res.status(500).json({ message: 'Error en el servidor' });
-        }
-        if (!row) return res.status(404).json({ message: 'Contacto no encontrado' });
-        const stmt = db.prepare('INSERT OR IGNORE INTO contacts (userId, contactId) VALUES (?, ?)');
-        stmt.run(userId, contactId, (err) => {
-            if (err) {
-                console.error('Error al agregar contacto:', err);
-                return res.status(500).json({ message: 'Error al agregar contacto', error: err.message });
-            }
-            console.log('Contacto agregado:', { userId, contactId });
-            res.json({ message: 'Contacto agregado' });
-        });
-        stmt.finalize();
-    });
-});
-
-// Obtener contactos con detalles
-app.get('/api/contacts/:userId', (req, res) => {
-    const userId = req.params.userId;
-    console.log('GET /api/contacts:', userId);
-    db.all(
-        'SELECT u.id, u.displayName, u.profilePicture FROM contacts c JOIN users u ON c.contactId = u.id WHERE c.userId = ?',
-        [userId],
-        (err, rows) => {
-            if (err) {
-                console.error('Error al obtener contactos:', err);
-                return res.status(500).json({ message: 'Error al obtener contactos', error: err.message });
-            }
-            console.log('Contactos encontrados:', rows);
-            res.json(rows);
-        }
-    );
-});
-
-// Enviar mensaje
-app.post('/api/messages', (req, res) => {
-    const { senderId, recipientId, content } = req.body;
-    console.log('POST /api/messages:', req.body);
-    if (!senderId || !recipientId || !content) return res.status(400).json({ message: 'Faltan datos en el mensaje' });
-    db.get('SELECT * FROM users WHERE id = ?', [recipientId], (err, row) => {
-        if (err || !row) return res.status(404).json({ message: 'Destinatario no encontrado' });
-        const stmt = db.prepare('INSERT INTO messages (senderId, recipientId, content, timestamp) VALUES (?, ?, ?, ?)');
-        const timestamp = new Date().toISOString();
-        stmt.run(senderId, recipientId, content, timestamp, (err) => {
-            if (err) return res.status(500).json({ message: 'Error al enviar mensaje' });
-            res.json({ message: 'Mensaje enviado' });
-        });
-        stmt.finalize();
-    });
-});
-
-// Obtener mensajes entre dos usuarios
-app.get('/api/messages/:userId/:contactId', (req, res) => {
-    const { userId, contactId } = req.params;
-    console.log('GET /api/messages:', { userId, contactId });
-    db.all(
-        'SELECT m.*, u.displayName, u.profilePicture FROM messages m JOIN users u ON m.senderId = u.id WHERE (m.senderId = ? AND m.recipientId = ?) OR (m.senderId = ? AND m.recipientId = ?) ORDER BY m.timestamp',
-        [userId, contactId, contactId, userId],
-        (err, rows) => {
-            if (err) return res.status(500).json({ message: 'Error en el servidor' });
-            res.json(rows);
-        }
-    );
-});
-
-// Usar puerto dinámico para Koyeb
+// Iniciar servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-});
-
-process.on('SIGINT', () => {
-    db.close((err) => {
-        if (err) console.error('Error al cerrar la base de datos:', err);
-        console.log('Base de datos cerrada');
-        process.exit(0);
+    console.log('Estructura de directorios en el servidor:');
+    fs.readdir(__dirname, (err, files) => {
+        if (err) console.error('Error al leer directorio:', err);
+        else console.log('Contenido de backend/:', files);
+    });
+    fs.readdir(path.join(__dirname, '..'), (err, files) => {
+        if (err) console.error('Error al leer directorio padre:', err);
+        else console.log('Contenido de uv-messages/:', files);
     });
 });
 
-// Manejar errores no capturados para evitar que el servidor se detenga
+// Manejar errores no capturados
 process.on('uncaughtException', (err) => {
     console.error('Error no capturado:', err);
 });
