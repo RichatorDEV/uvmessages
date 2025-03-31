@@ -3,27 +3,25 @@ const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const path = require('path');
 const app = express();
-const PORT = 3000;
 
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve frontend/
 
 // Configurar multer para subir fotos
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'public/uploads/'),
+    destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')), // Carpeta uploads en backend/
     filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
 // Conectar a la base de datos
-const db = new sqlite3.Database('./database.db', (err) => {
+const db = new sqlite3.Database(path.join(__dirname, 'database.db'), (err) => {
     if (err) console.error('Error al conectar a la base de datos:', err);
     else console.log('Conectado a la base de datos SQLite');
 });
 
 // Crear tablas y manejar migración
 db.serialize(() => {
-    // Verificar si la tabla users existe
     db.all("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err, rows) => {
         if (err) {
             console.error('Error al verificar existencia de tabla:', err);
@@ -31,7 +29,6 @@ db.serialize(() => {
         }
 
         if (rows.length === 0) {
-            // Si no existe, crear la tabla directamente con todas las columnas
             console.log('Creando tabla users desde cero...');
             db.run(`
                 CREATE TABLE users (
@@ -46,7 +43,6 @@ db.serialize(() => {
                 else console.log('Tabla users creada');
             });
         } else {
-            // Si existe, verificar si tiene las columnas necesarias
             db.all("PRAGMA table_info(users)", (err, columns) => {
                 if (err) {
                     console.error('Error al verificar columnas:', err);
@@ -57,11 +53,9 @@ db.serialize(() => {
 
                 if (!hasDisplayName || !hasProfilePicture) {
                     console.log('Migrando tabla users...');
-                    // Renombrar la tabla antigua
                     db.run('ALTER TABLE users RENAME TO users_old', (err) => {
                         if (err) console.error('Error al renombrar tabla:', err);
                     });
-                    // Crear la nueva tabla
                     db.run(`
                         CREATE TABLE users (
                             id TEXT PRIMARY KEY,
@@ -73,18 +67,15 @@ db.serialize(() => {
                     `, (err) => {
                         if (err) console.error('Error al crear nueva tabla:', err);
                     });
-                    // Migrar datos
                     db.run(`
                         INSERT INTO users (id, username, password)
                         SELECT id, username, password FROM users_old
                     `, (err) => {
                         if (err) console.error('Error al migrar datos:', err);
                     });
-                    // Actualizar displayName con username por defecto
                     db.run('UPDATE users SET displayName = username WHERE displayName IS NULL', (err) => {
                         if (err) console.error('Error al actualizar displayName:', err);
                     });
-                    // Eliminar la tabla antigua
                     db.run('DROP TABLE users_old', (err) => {
                         if (err) console.error('Error al eliminar tabla antigua:', err);
                         else console.log('Migración completada');
@@ -96,7 +87,6 @@ db.serialize(() => {
         }
     });
 
-    // Crear otras tablas si no existen
     db.run(`
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +107,11 @@ db.serialize(() => {
             PRIMARY KEY (userId, contactId)
         )
     `);
+});
+
+// Ruta raíz para servir index.html
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
 // Registro de usuario
@@ -263,8 +258,10 @@ app.get('/api/messages/:userId/:contactId', (req, res) => {
     );
 });
 
+// Usar puerto dinámico para Koyeb
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });
 
 process.on('SIGINT', () => {
