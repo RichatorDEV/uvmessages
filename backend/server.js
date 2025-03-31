@@ -2,6 +2,7 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs'); // Añadimos fs para depurar
 const app = express();
 
 app.use(express.json());
@@ -9,7 +10,11 @@ app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve frontend/
 
 // Configurar multer para subir fotos
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads')), // Carpeta uploads en backend/
+    destination: (req, file, cb) => {
+        const uploadDir = path.join(__dirname, 'uploads');
+        fs.mkdirSync(uploadDir, { recursive: true }); // Crea la carpeta si no existe
+        cb(null, uploadDir);
+    },
     filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
@@ -111,7 +116,13 @@ db.serialize(() => {
 
 // Ruta raíz para servir index.html
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/index.html'));
+    const indexPath = path.join(__dirname, '../frontend/index.html');
+    console.log('Intentando servir:', indexPath); // Depuración
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send('Error: No se encontró index.html en frontend/');
+    }
 });
 
 // Registro de usuario
