@@ -2,11 +2,11 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Para depuración
+const fs = require('fs');
 const app = express();
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve archivos desde frontend/
+app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve frontend/
 
 // Configurar multer para subir fotos
 const storage = multer.diskStorage({
@@ -116,13 +116,19 @@ db.serialize(() => {
 
 // Ruta raíz para servir index.html desde frontend/
 app.get('/', (req, res) => {
-    const indexPath = path.join(__dirname, '..', 'frontend', 'index.html'); // Ruta explícita
+    const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
     console.log('Intentando servir:', indexPath); // Depuración
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).send('Error: No se encontró index.html en frontend/');
+        console.error('No se encontró index.html en:', indexPath);
+        res.status(404).send('Error: No se encontró index.html en frontend/. Revisa la estructura del proyecto.');
     }
+});
+
+// Ruta de prueba para verificar que el servidor funciona
+app.get('/api/test', (req, res) => {
+    res.json({ message: '¡El servidor está funcionando!' });
 });
 
 // Registro de usuario
@@ -281,4 +287,9 @@ process.on('SIGINT', () => {
         console.log('Base de datos cerrada');
         process.exit(0);
     });
+});
+
+// Manejar errores no capturados para evitar que el servidor se detenga
+process.on('uncaughtException', (err) => {
+    console.error('Error no capturado:', err);
 });
