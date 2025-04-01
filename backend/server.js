@@ -88,7 +88,7 @@ app.get('/api/users', async (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('Error al consultar usuarios:', err);
-        res.status(500).json({ error: 'Error en el servidor' });
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
@@ -186,15 +186,16 @@ app.get('/api/messages', async (req, res) => {
 const PORT = process.env.PORT || 5432;
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-    await initializeDatabase();
     try {
+        await initializeDatabase();
         const { rows } = await pool.query('SELECT NOW()');
         console.log('Conexión a la base de datos exitosa. Hora actual:', rows[0].now);
     } catch (err) {
-        console.error('Error al conectar a la base de datos al iniciar:', err);
+        console.error('Error al iniciar el servidor:', err);
     }
 });
 
+// Manejar errores no capturados
 process.on('uncaughtException', (err) => {
     console.error('Error no capturado:', err);
 });
