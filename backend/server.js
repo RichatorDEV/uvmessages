@@ -42,7 +42,6 @@ const pool = new Pool({
 // Inicializar base de datos
 async function initializeDatabase() {
     try {
-        // Tabla users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -54,7 +53,6 @@ async function initializeDatabase() {
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
 
-        // Tabla messages
         await pool.query(`
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
@@ -143,8 +141,8 @@ app.post('/api/messages', async (req, res) => {
             return res.status(400).json({ error: 'Faltan campos requeridos: senderId, recipientId, content' });
         }
         const query = `
-            INSERT INTO messages (senderId, recipientId, content)
-            VALUES ($1, $2, $3)
+            INSERT INTO messages (senderId, recipientId, content, timestamp)
+            VALUES ($1, $2, $3, NOW())
             RETURNING *;
         `;
         const values = [senderId, recipientId, content];
