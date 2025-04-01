@@ -113,22 +113,37 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Subir foto de perfil
+// Actualizar perfil (foto y nombre)
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No se subió ningún archivo' });
-        }
-        const filePath = req.file.path;
         const userId = req.body.userId;
-        const query = 'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING *';
-        const { rows } = await pool.query(query, [filePath, userId]);
+        const displayName = req.body.displayName || null;
+        let query = 'UPDATE users SET ';
+        const values = [];
+        let paramCount = 1;
+
+        if (req.file) {
+            const filePath = req.file.path;
+            query += `profilePicture = $${paramCount}`;
+            values.push(filePath);
+            paramCount++;
+        }
+        if (displayName) {
+            if (req.file) query += ', ';
+            query += `displayName = $${paramCount}`;
+            values.push(displayName);
+            paramCount++;
+        }
+        query += ` WHERE id = $${paramCount} RETURNING *`;
+        values.push(userId);
+
+        const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
-        res.json({ message: 'Archivo subido exitosamente', user: rows[0] });
+        res.json({ message: 'Perfil actualizado exitosamente', user: rows[0] });
     } catch (err) {
-        console.error('Error al subir archivo:', err);
+        console.error('Error al actualizar perfil:', err);
         res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
@@ -195,7 +210,6 @@ app.listen(PORT, async () => {
     }
 });
 
-// Manejar errores no capturados
 process.on('uncaughtException', (err) => {
     console.error('Error no capturado:', err);
 });
