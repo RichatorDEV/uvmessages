@@ -3,24 +3,24 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
 const cors = require('cors');
-const fs = require('fs'); // Añadimos fs para manejar el sistema de archivos
+const fs = require('fs').promises; // Usamos promesas para manejo asíncrono
 
 const app = express();
 
 app.use(express.json());
 app.use(cors());
 
-// Crear el directorio uploads/ si no existe
-const uploadDir = 'uploads';
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-    console.log('Directorio "uploads/" creado.');
-}
-
 // Configurar Multer para manejar subidas de archivos
+const uploadDir = 'uploads';
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
+    destination: async (req, file, cb) => {
+        try {
+            await fs.mkdir(uploadDir, { recursive: true }); // Crear directorio si no existe
+            cb(null, uploadDir);
+        } catch (err) {
+            console.error('Error al crear el directorio uploads:', err);
+            cb(err);
+        }
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
