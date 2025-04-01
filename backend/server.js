@@ -1,8 +1,22 @@
 const express = require('express');
 const { Pool } = require('pg');
+const multer = require('multer');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
+
+// Configurar Multer para manejar subidas de archivos
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/'); // Carpeta donde se guardarán los archivos
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname)); // Nombre único
+    }
+});
+const upload = multer({ storage: storage });
 
 // Conectar a PostgreSQL usando DATABASE_URL de Railway
 const pool = new Pool({
@@ -31,6 +45,30 @@ app.get('/api/users', async (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('Error al consultar usuarios:', err);
+        res.status(500).json({ error: 'Error en el servidor' });
+    }
+});
+
+// Ruta para subir un archivo (ejemplo: foto de perfil)
+app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No se subió ningún archivo' });
+        }
+        const filePath = req.file.path;
+        const userId = req.body.userId; // Suponiendo que envías el ID del usuario
+
+        // Actualizar la base de datos con la ruta del archivo
+        const query = 'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING *';
+        const { rows } = await pool.query(query, [filePath, userId]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        res.json({ message: 'Archivo subido exitosamente', user: rows[0] });
+    } catch (err) {
+        console.error('Error al subir archivo:', err);
         res.status(500).json({ error: 'Error en el servidor' });
     }
 });
