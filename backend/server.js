@@ -9,7 +9,7 @@ const app = express();
 
 app.use(express.json());
 app.use(cors());
-app.use('/uploads', express.static('uploads')); // Servir archivos estáticos desde uploads/
+app.use('/uploads', express.static('uploads'));
 
 // Configurar Multer
 const uploadDir = 'uploads';
@@ -42,6 +42,7 @@ const pool = new Pool({
 // Inicializar base de datos
 async function initializeDatabase() {
     try {
+        // Tabla users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -52,12 +53,26 @@ async function initializeDatabase() {
             );
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
+
+        // Tabla messages
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                senderId TEXT NOT NULL,
+                recipientId TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (senderId) REFERENCES users(id),
+                FOREIGN KEY (recipientId) REFERENCES users(id)
+            );
+        `);
+        console.log('Tabla "messages" verificada o creada exitosamente.');
     } catch (err) {
-        console.error('Error al crear la tabla users:', err);
+        console.error('Error al inicializar la base de datos:', err);
     }
 }
 
-// Rutas
+// Ruta de prueba
 app.get('/api/test', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT NOW()');
@@ -68,6 +83,7 @@ app.get('/api/test', async (req, res) => {
     }
 });
 
+// Obtener usuarios
 app.get('/api/users', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users');
@@ -78,6 +94,7 @@ app.get('/api/users', async (req, res) => {
     }
 });
 
+// Crear un usuario
 app.post('/api/users', async (req, res) => {
     try {
         const { id, username, password, displayName, profilePicture } = req.body;
@@ -98,6 +115,7 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
+// Subir foto de perfil
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
         if (!req.file) {
@@ -114,6 +132,52 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
     } catch (err) {
         console.error('Error al subir archivo:', err);
         res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
+// Enviar un mensaje
+app.post('/api/messages', async (req, res) => {
+    try {
+        const { senderId, recipientId, content } = req.body;
+        if (!senderId || !recipientId || !content) {
+            return res.status(400).json({ error: 'Faltan campos requeridos: senderId, recipientId, content' });
+        }
+        const query = `
+            INSERT INTO messages (senderId, recipientId, content)
+            VALUES ($1, $2, $3)
+            RETURNING *;
+        `;
+        const values = [senderId, recipientId, content];
+        const { rows } = await pool.query(query, values);
+        res.status(201).json({ message: 'Mensaje enviado exitosamente', message: rows[0] });
+    } catch (err) {
+        console.error('Error al enviar mensaje:', err);
+        res.status(500).json({ error: 'Error en el servidor al enviar mensaje', details: err.message });
+    }
+});
+
+// Obtener mensajes entre dos usuarios
+app.get('/api/messages', async (req, res) => {
+    try {
+        const { userId, contactId } = req.query;
+        if (!userId || !contactId) {
+            return res.status(400).json({ error: 'Faltan parámetros: userId, contactId' });
+        }
+        const query = `
+            SELECT m.*, u1.displayName AS senderName, u1.profilePicture AS senderPicture,
+                   u2.displayName AS recipientName, u2.profilePicture AS recipientPicture
+            FROM messages m
+            JOIN users u1 ON m.senderId = u1.id
+            JOIN users u2 ON m.recipientId = u2.id
+            WHERE (m.senderId = $1 AND m.recipientId = $2) OR (m.senderId = $2 AND m.recipientId = $1)
+            ORDER BY m.timestamp ASC;
+        `;
+        const values = [userId, contactId];
+        const { rows } = await pool.query(query, values);
+        res.json(rows);
+    } catch (err) {
+        console.error('Error al obtener mensajes:', err);
+        res.status(500).json({ error: 'Error en el servidor al obtener mensajes', details: err.message });
     }
 });
 
