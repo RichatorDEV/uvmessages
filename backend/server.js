@@ -3,16 +3,24 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
 const cors = require('cors');
+const fs = require('fs'); // Añadimos fs para manejar el sistema de archivos
 
 const app = express();
 
 app.use(express.json());
 app.use(cors());
 
+// Crear el directorio uploads/ si no existe
+const uploadDir = 'uploads';
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+    console.log('Directorio "uploads/" creado.');
+}
+
 // Configurar Multer para manejar subidas de archivos
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -33,7 +41,6 @@ const pool = new Pool({
 // Función para inicializar la base de datos
 async function initializeDatabase() {
     try {
-        // Crear la tabla users si no existe
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -45,7 +52,6 @@ async function initializeDatabase() {
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
 
-        // Verificar si la columna profilePicture existe y añadirla si no
         const columnCheck = await pool.query(`
             SELECT column_name 
             FROM information_schema.columns 
@@ -135,7 +141,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
 const PORT = process.env.PORT || 5432;
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-    await initializeDatabase(); // Inicializar la base de datos al arrancar
+    await initializeDatabase();
     try {
         const { rows } = await pool.query('SELECT NOW()');
         console.log('Conexión a la base de datos exitosa. Hora actual:', rows[0].now);
