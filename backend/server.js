@@ -95,17 +95,21 @@ app.get('/api/users', async (req, res) => {
 // Crear un usuario
 app.post('/api/users', async (req, res) => {
     try {
-        const { id, username, password, displayName, profilePicture } = req.body;
-        if (!id || !username || !password) {
-            return res.status(400).json({ error: 'Faltan campos requeridos: id, username, password' });
+        const { username, password, displayName, profilePicture } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Faltan campos requeridos: username, password' });
         }
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $1, $2, $3, $4)
+            ON CONFLICT (id) DO NOTHING
             RETURNING *;
         `;
-        const values = [id, username, password, displayName || null, profilePicture || null];
+        const values = [username, password, displayName || null, profilePicture || null];
         const { rows } = await pool.query(query, values);
+        if (rows.length === 0) {
+            return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
+        }
         res.status(201).json({ message: 'Usuario creado exitosamente', user: rows[0] });
     } catch (err) {
         console.error('Error al crear usuario:', err);
@@ -118,24 +122,35 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
     try {
         const userId = req.body.userId;
         const displayName = req.body.displayName || null;
+        const filePath = req.file ? req.file.path : null;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'Falta el userId' });
+        }
+        if (!filePath && !displayName) {
+            return res.status(400).json({ error: 'Debe proporcionar al menos displayName o una foto' });
+        }
+
         let query = 'UPDATE users SET ';
         const values = [];
         let paramCount = 1;
 
-        if (req.file) {
-            const filePath = req.file.path;
+        if (filePath) {
             query += `profilePicture = $${paramCount}`;
             values.push(filePath);
             paramCount++;
         }
         if (displayName) {
-            if (req.file) query += ', ';
+            if (filePath) query += ', ';
             query += `displayName = $${paramCount}`;
             values.push(displayName);
             paramCount++;
         }
         query += ` WHERE id = $${paramCount} RETURNING *`;
         values.push(userId);
+
+        console.log('Consulta SQL:', query);
+        console.log('Valores:', values);
 
         const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
@@ -212,4 +227,5 @@ app.listen(PORT, async () => {
 
 process.on('uncaughtException', (err) => {
     console.error('Error no capturado:', err);
+    process.exit(1);
 });
