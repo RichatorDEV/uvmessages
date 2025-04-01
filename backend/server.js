@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
 const cors = require('cors');
-const fs = require('fs').promises; // Usamos promesas para manejo asíncrono
+const fs = require('fs').promises;
 
 const app = express();
 
@@ -15,7 +15,7 @@ const uploadDir = 'uploads';
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
-            await fs.mkdir(uploadDir, { recursive: true }); // Crear directorio si no existe
+            await fs.mkdir(uploadDir, { recursive: true });
             cb(null, uploadDir);
         } catch (err) {
             console.error('Error al crear el directorio uploads:', err);
@@ -29,7 +29,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 } // Límite de 5MB
+    limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 // Conectar a PostgreSQL
@@ -41,6 +41,7 @@ const pool = new Pool({
 // Función para inicializar la base de datos
 async function initializeDatabase() {
     try {
+        // Crear la tabla users si no existe
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -51,19 +52,11 @@ async function initializeDatabase() {
             );
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
-
-        const columnCheck = await pool.query(`
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'profilePicture';
-        `);
-        if (columnCheck.rows.length === 0) {
-            await pool.query('ALTER TABLE users ADD COLUMN profilePicture TEXT;');
-            console.log('Columna "profilePicture" añadida a la tabla "users".');
-        }
     } catch (err) {
-        console.error('Error al inicializar la base de datos:', err);
+        console.error('Error al crear la tabla users:', err);
     }
+
+    // No necesitamos añadir profilePicture si ya existe, CREATE TABLE IF NOT EXISTS ya lo incluye
 }
 
 // Ruta de prueba
