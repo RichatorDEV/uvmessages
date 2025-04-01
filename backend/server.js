@@ -1,43 +1,51 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 const app = express();
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend'))); // Sirve frontend/
 
-// Ruta raíz para servir index.html
-app.get('/', (req, res) => {
-    const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
-    console.log('Directorio actual (__dirname):', __dirname);
-    console.log('Intentando servir:', indexPath);
-    if (fs.existsSync(indexPath)) {
-        console.log('Archivo encontrado, sirviendo index.html');
-        res.sendFile(indexPath);
-    } else {
-        console.error('Archivo no encontrado en:', indexPath);
-        res.status(404).send('Error: No se encontró index.html en frontend/. Revisa la estructura o el despliegue.');
-    }
+// Conectar a PostgreSQL usando DATABASE_URL de Railway
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false } // Necesario para conexiones en Railway
 });
 
 // Ruta de prueba
-app.get('/api/test', (req, res) => {
-    res.json({ message: '¡El servidor está funcionando!', dir: __dirname });
+app.get('/api/test', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT NOW()'); // Prueba la conexión a la DB
+        res.json({ 
+            message: '¡El servidor está funcionando!', 
+            dbTime: rows[0].now 
+        });
+    } catch (err) {
+        console.error('Error al conectar a la base de datos:', err);
+        res.status(500).json({ message: 'Error en la base de datos', error: err.message });
+    }
+});
+
+// Ejemplo: Obtener usuarios
+app.get('/api/users', async (req, res) => {
+    try {
+        const { rows } = await pool.query('SELECT * FROM users');
+        res.json(rows);
+    } catch (err) {
+        console.error('Error al consultar usuarios:', err);
+        res.status(500).json({ error: 'Error en el servidor' });
+    }
 });
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-    console.log('Estructura de directorios en el servidor:');
-    fs.readdir(__dirname, (err, files) => {
-        if (err) console.error('Error al leer directorio:', err);
-        else console.log('Contenido de backend/:', files);
-    });
-    fs.readdir(path.join(__dirname, '..'), (err, files) => {
-        if (err) console.error('Error al leer directorio padre:', err);
-        else console.log('Contenido de uv-messages/:', files);
-    });
+    // Verificar conexión a la base de datos al iniciar
+    try {
+        const { rows } = await pool.query('SELECT NOW()');
+        console.log('Conexión a la base de datos exitosa. Hora actual:', rows[0].now);
+    } catch (err) {
+        console.error('Error al conectar a la base de datos al iniciar:', err);
+    }
 });
 
 // Manejar errores no capturados
