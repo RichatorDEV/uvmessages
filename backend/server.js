@@ -9,8 +9,9 @@ const app = express();
 
 app.use(express.json());
 app.use(cors());
+app.use('/uploads', express.static('uploads')); // Servir archivos estáticos desde uploads/
 
-// Configurar Multer para manejar subidas de archivos
+// Configurar Multer
 const uploadDir = 'uploads';
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -38,10 +39,9 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// Función para inicializar la base de datos
+// Inicializar base de datos
 async function initializeDatabase() {
     try {
-        // Crear la tabla users si no existe
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -55,25 +55,19 @@ async function initializeDatabase() {
     } catch (err) {
         console.error('Error al crear la tabla users:', err);
     }
-
-    // No necesitamos añadir profilePicture si ya existe, CREATE TABLE IF NOT EXISTS ya lo incluye
 }
 
-// Ruta de prueba
+// Rutas
 app.get('/api/test', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT NOW()');
-        res.json({ 
-            message: '¡El servidor está funcionando!', 
-            dbTime: rows[0].now 
-        });
+        res.json({ message: '¡El servidor está funcionando!', dbTime: rows[0].now });
     } catch (err) {
         console.error('Error al conectar a la base de datos:', err);
         res.status(500).json({ message: 'Error en la base de datos', error: err.message });
     }
 });
 
-// Obtener usuarios
 app.get('/api/users', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users');
@@ -84,14 +78,12 @@ app.get('/api/users', async (req, res) => {
     }
 });
 
-// Crear un usuario
 app.post('/api/users', async (req, res) => {
     try {
         const { id, username, password, displayName, profilePicture } = req.body;
         if (!id || !username || !password) {
             return res.status(400).json({ error: 'Faltan campos requeridos: id, username, password' });
         }
-
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
             VALUES ($1, $2, $3, $4, $5)
@@ -99,7 +91,6 @@ app.post('/api/users', async (req, res) => {
         `;
         const values = [id, username, password, displayName || null, profilePicture || null];
         const { rows } = await pool.query(query, values);
-
         res.status(201).json({ message: 'Usuario creado exitosamente', user: rows[0] });
     } catch (err) {
         console.error('Error al crear usuario:', err);
@@ -107,7 +98,6 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Subir foto de perfil
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
         if (!req.file) {
@@ -115,14 +105,11 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         }
         const filePath = req.file.path;
         const userId = req.body.userId;
-
         const query = 'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING *';
         const { rows } = await pool.query(query, [filePath, userId]);
-
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
-
         res.json({ message: 'Archivo subido exitosamente', user: rows[0] });
     } catch (err) {
         console.error('Error al subir archivo:', err);
@@ -143,7 +130,6 @@ app.listen(PORT, async () => {
     }
 });
 
-// Manejar errores no capturados
 process.on('uncaughtException', (err) => {
     console.error('Error no capturado:', err);
 });
