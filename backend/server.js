@@ -2,12 +2,12 @@ const express = require('express');
 const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
-const cors = require('cors'); // Añadimos cors
+const cors = require('cors');
 
 const app = express();
 
 app.use(express.json());
-app.use(cors()); // Habilitamos CORS para todos los orígenes
+app.use(cors());
 
 // Configurar Multer para manejar subidas de archivos
 const storage = multer.diskStorage({
@@ -19,13 +19,46 @@ const storage = multer.diskStorage({
         cb(null, uniqueSuffix + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 } // Límite de 5MB
+});
 
-// Conectar a PostgreSQL usando DATABASE_URL de Railway
+// Conectar a PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
+
+// Función para inicializar la base de datos
+async function initializeDatabase() {
+    try {
+        // Crear la tabla users si no existe
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                displayName TEXT,
+                profilePicture TEXT
+            );
+        `);
+        console.log('Tabla "users" verificada o creada exitosamente.');
+
+        // Verificar si la columna profilePicture existe y añadirla si no
+        const columnCheck = await pool.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'profilePicture';
+        `);
+        if (columnCheck.rows.length === 0) {
+            await pool.query('ALTER TABLE users ADD COLUMN profilePicture TEXT;');
+            console.log('Columna "profilePicture" añadida a la tabla "users".');
+        }
+    } catch (err) {
+        console.error('Error al inicializar la base de datos:', err);
+    }
+}
 
 // Ruta de prueba
 app.get('/api/test', async (req, res) => {
@@ -94,7 +127,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         res.json({ message: 'Archivo subido exitosamente', user: rows[0] });
     } catch (err) {
         console.error('Error al subir archivo:', err);
-        res.status(500).json({ error: 'Error en el servidor' });
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
@@ -102,6 +135,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
 const PORT = process.env.PORT || 5432;
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
+    await initializeDatabase(); // Inicializar la base de datos al arrancar
     try {
         const { rows } = await pool.query('SELECT NOW()');
         console.log('Conexión a la base de datos exitosa. Hora actual:', rows[0].now);
