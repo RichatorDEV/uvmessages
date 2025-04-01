@@ -74,7 +74,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
 });
 
 // Iniciar servidor
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5432; // Cambiado de 3000 a 5432
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
     // Verificar conexión a la base de datos al iniciar
