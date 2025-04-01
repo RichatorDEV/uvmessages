@@ -124,6 +124,8 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         const displayName = req.body.displayName || null;
         const filePath = req.file ? req.file.path : null;
 
+        console.log('Datos recibidos:', { userId, displayName, filePath });
+
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
         }
@@ -156,6 +158,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
+        console.log('Usuario actualizado:', rows[0]);
         res.json({ message: 'Perfil actualizado exitosamente', user: rows[0] });
     } catch (err) {
         console.error('Error al actualizar perfil:', err);
