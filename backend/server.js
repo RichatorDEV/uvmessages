@@ -162,8 +162,11 @@ app.get('/api/messages', async (req, res) => {
             return res.status(400).json({ error: 'Faltan parámetros: userId, contactId' });
         }
         const query = `
-            SELECT m.*, u1.displayName AS senderName, u1.profilePicture AS senderPicture,
-                   u2.displayName AS recipientName, u2.profilePicture AS recipientPicture
+            SELECT m.*, 
+                   COALESCE(u1.displayName, u1.username) AS senderName, 
+                   u1.profilePicture AS senderPicture,
+                   COALESCE(u2.displayName, u2.username) AS recipientName, 
+                   u2.profilePicture AS recipientPicture
             FROM messages m
             JOIN users u1 ON m.senderId = u1.id
             JOIN users u2 ON m.recipientId = u2.id
