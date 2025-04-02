@@ -47,7 +47,7 @@ async function initializeDatabase() {
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
-                displayName TEXT,
+                displayName TEXT NOT NULL,
                 profilePicture TEXT
             );
         `);
@@ -100,6 +100,7 @@ app.get('/api/test', async (req, res) => {
 app.get('/api/users', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users');
+        console.log('Usuarios devueltos:', rows);
         res.json(rows);
     } catch (err) {
         console.error('Error al consultar usuarios:', err.stack);
@@ -110,7 +111,7 @@ app.get('/api/users', async (req, res) => {
 // Crear un usuario
 app.post('/api/users', async (req, res) => {
     try {
-        const { username, password, displayName, profilePicture } = req.body;
+        const { username, password, displayName } = req.body;
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
@@ -120,11 +121,12 @@ app.post('/api/users', async (req, res) => {
             ON CONFLICT (id) DO NOTHING
             RETURNING *;
         `;
-        const values = [username, password, displayName || username, profilePicture || null];
+        const values = [username, password, displayName || username, null];
         const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
             return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
         }
+        console.log('Usuario creado:', rows[0]);
         res.status(201).json({ message: 'Usuario creado', user: rows[0] });
     } catch (err) {
         console.error('Error al crear usuario:', err.stack);
@@ -132,7 +134,7 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Obtener contactos de un usuario (SOLO LOS AGREGADOS)
+// Obtener contactos de un usuario
 app.get('/api/contacts', async (req, res) => {
     try {
         const { userId } = req.query;
@@ -140,7 +142,7 @@ app.get('/api/contacts', async (req, res) => {
             return res.status(400).json({ error: 'Falta el userId' });
         }
         const query = `
-            SELECT u.id, u.username, COALESCE(u.displayName, u.username) AS displayName, u.profilePicture,
+            SELECT u.id, u.username, u.displayName, u.profilePicture,
                    (SELECT COUNT(*) 
                     FROM messages m 
                     WHERE m.recipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
@@ -191,16 +193,13 @@ app.post('/api/contacts', async (req, res) => {
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
         const userId = req.body.userId;
-        const displayName = req.body.displayName || null;
+        const displayName = req.body.displayName;
         const filePath = req.file ? req.file.path : null;
 
         console.log('Actualizando perfil:', { userId, displayName, filePath });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
-        }
-        if (!filePath && !displayName) {
-            return res.status(400).json({ error: 'Debe proporcionar displayName o una foto' });
         }
 
         let query = 'UPDATE users SET ';
@@ -263,9 +262,9 @@ app.get('/api/messages', async (req, res) => {
         }
         const query = `
             SELECT m.*, 
-                   COALESCE(u1.displayName, u1.username) AS senderDisplayName, 
+                   u1.displayName AS senderDisplayName, 
                    u1.profilePicture AS senderPicture,
-                   COALESCE(u2.displayName, u2.username) AS recipientDisplayName, 
+                   u2.displayName AS recipientDisplayName, 
                    u2.profilePicture AS recipientPicture
             FROM messages m
             JOIN users u1 ON m.senderId = u1.id
@@ -293,7 +292,7 @@ app.post('/api/messages/read', async (req, res) => {
         const query = `
             UPDATE messages 
             SET isRead = TRUE 
-            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
+            WHERE recipientId = $1 AND m.senderId = $2 AND isRead = FALSE
             RETURNING *;
         `;
         const values = [userId, contactId];
