@@ -116,14 +116,14 @@ app.post('/api/users', async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
-        const finalDisplayName = displayName || username; // Usa username si displayName no se envía
+        const finalDisplayName = displayName || username; // Garantiza valor
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
-            VALUES ($1, $1, $2, $3, $4)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (id) DO NOTHING
             RETURNING id, username, displayName, profilePicture;
         `;
-        const values = [username, password, finalDisplayName, null];
+        const values = [username, username, password, finalDisplayName, null];
         const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
             return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
@@ -210,8 +210,12 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
         }
-        if (!displayName && !filePath) {
-            return res.status(400).json({ error: 'Debe proporcionar displayName o una foto' });
+
+        // Obtener usuario actual para no sobrescribir displayName con null
+        const currentUserQuery = 'SELECT displayName FROM users WHERE id = $1';
+        const currentUser = await pool.query(currentUserQuery, [userId]);
+        if (currentUser.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
         }
 
         let query = 'UPDATE users SET ';
@@ -228,14 +232,16 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
             query += `displayName = $${paramCount}`;
             values.push(displayName);
             paramCount++;
+        } else {
+            if (filePath) query += ', ';
+            query += `displayName = $${paramCount}`;
+            values.push(currentUser.rows[0].displayName); // Mantener displayName existente
+            paramCount++;
         }
         query += ` WHERE id = $${paramCount} RETURNING id, username, displayName, profilePicture`;
         values.push(userId);
 
         const { rows } = await pool.query(query, values);
-        if (rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
         console.log('Usuario actualizado:', rows[0]);
         res.json({ message: 'Perfil actualizado', user: rows[0] });
     } catch (err) {
@@ -308,7 +314,7 @@ app.post('/api/messages/read', async (req, res) => {
         const query = `
             UPDATE messages 
             SET isRead = TRUE 
-            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
+            WHERE recipientId = $1 AND senderId = $2 AND m.isRead = FALSE
             RETURNING *;
         `;
         const values = [userId, contactId];
