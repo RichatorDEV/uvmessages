@@ -53,8 +53,9 @@ async function initializeDatabase() {
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
 
+        await pool.query(`DROP TABLE IF EXISTS messages CASCADE;`);
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS messages (
+            CREATE TABLE messages (
                 id SERIAL PRIMARY KEY,
                 senderId TEXT NOT NULL,
                 recipientId TEXT NOT NULL,
@@ -65,10 +66,11 @@ async function initializeDatabase() {
                 FOREIGN KEY (recipientId) REFERENCES users(id)
             );
         `);
-        console.log('Tabla "messages" verificada o creada exitosamente.');
+        console.log('Tabla "messages" recreada exitosamente con TIMESTAMP.');
 
+        await pool.query(`DROP TABLE IF EXISTS contacts CASCADE;`);
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS contacts (
+            CREATE TABLE contacts (
                 userId TEXT NOT NULL,
                 contactId TEXT NOT NULL,
                 PRIMARY KEY (userId, contactId),
@@ -76,7 +78,7 @@ async function initializeDatabase() {
                 FOREIGN KEY (contactId) REFERENCES users(id)
             );
         `);
-        console.log('Tabla "contacts" verificada o creada exitosamente.');
+        console.log('Tabla "contacts" recreada exitosamente.');
     } catch (err) {
         console.error('Error al inicializar la base de datos:', err);
     }
@@ -140,7 +142,7 @@ app.get('/api/contacts', async (req, res) => {
             SELECT u.*, 
                    (SELECT COUNT(*) 
                     FROM messages m 
-                    WHERE m.rerecipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
+                    WHERE m.recipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
             FROM contacts c
             JOIN users u ON c.contactId = u.id
             WHERE c.userId = $1;
@@ -157,6 +159,7 @@ app.get('/api/contacts', async (req, res) => {
 app.post('/api/contacts', async (req, res) => {
     try {
         const { userId, contactId } = req.body;
+        console.log('Intentando agregar contacto:', { userId, contactId });
         if (!userId || !contactId) {
             return res.status(400).json({ error: 'Faltan userId o contactId' });
         }
