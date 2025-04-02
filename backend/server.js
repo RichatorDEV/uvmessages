@@ -99,8 +99,8 @@ app.get('/api/test', async (req, res) => {
 // Obtener todos los usuarios (para login)
 app.get('/api/users', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT * FROM users');
-        console.log('Usuarios devueltos:', rows);
+        const { rows } = await pool.query('SELECT id, username, password, displayName, profilePicture FROM users');
+        console.log('GET /api/users - Usuarios devueltos:', rows);
         res.json(rows);
     } catch (err) {
         console.error('Error al consultar usuarios:', err.stack);
@@ -112,16 +112,18 @@ app.get('/api/users', async (req, res) => {
 app.post('/api/users', async (req, res) => {
     try {
         const { username, password, displayName } = req.body;
+        console.log('POST /api/users - Datos recibidos:', { username, password, displayName });
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
+        const finalDisplayName = displayName || username;
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
             VALUES ($1, $1, $2, $3, $4)
             ON CONFLICT (id) DO NOTHING
             RETURNING *;
         `;
-        const values = [username, password, displayName || username, null];
+        const values = [username, password, finalDisplayName, null];
         const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
             return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
@@ -138,6 +140,7 @@ app.post('/api/users', async (req, res) => {
 app.get('/api/contacts', async (req, res) => {
     try {
         const { userId } = req.query;
+        console.log('GET /api/contacts - userId:', userId);
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
         }
@@ -163,7 +166,7 @@ app.get('/api/contacts', async (req, res) => {
 app.post('/api/contacts', async (req, res) => {
     try {
         const { userId, contactId } = req.body;
-        console.log('Intentando agregar contacto:', { userId, contactId });
+        console.log('POST /api/contacts - Datos recibidos:', { userId, contactId });
         if (!userId || !contactId) {
             return res.status(400).json({ error: 'Faltan userId o contactId' });
         }
@@ -182,6 +185,7 @@ app.post('/api/contacts', async (req, res) => {
             RETURNING *;
         `;
         const { rows } = await pool.query(query, [userId, contactId]);
+        console.log('Contacto agregado:', rows[0]);
         res.status(201).json({ message: 'Contacto agregado', contact: rows[0] });
     } catch (err) {
         console.error('Error al agregar contacto:', err.stack);
@@ -196,7 +200,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         const displayName = req.body.displayName;
         const filePath = req.file ? req.file.path : null;
 
-        console.log('Actualizando perfil:', { userId, displayName, filePath });
+        console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, displayName, filePath });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
@@ -236,6 +240,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
 app.post('/api/messages', async (req, res) => {
     try {
         const { senderId, recipientId, content } = req.body;
+        console.log('POST /api/messages - Datos recibidos:', { senderId, recipientId, content });
         if (!senderId || !recipientId || !content) {
             return res.status(400).json({ error: 'Faltan senderId, recipientId o content' });
         }
@@ -246,6 +251,7 @@ app.post('/api/messages', async (req, res) => {
         `;
         const values = [senderId, recipientId, content];
         const { rows } = await pool.query(query, values);
+        console.log('Mensaje enviado:', rows[0]);
         res.status(201).json({ message: 'Mensaje enviado', message: rows[0] });
     } catch (err) {
         console.error('Error al enviar mensaje:', err.stack);
@@ -257,6 +263,7 @@ app.post('/api/messages', async (req, res) => {
 app.get('/api/messages', async (req, res) => {
     try {
         const { userId, contactId } = req.query;
+        console.log('GET /api/messages - Parámetros:', { userId, contactId });
         if (!userId || !contactId) {
             return res.status(400).json({ error: 'Faltan userId o contactId' });
         }
@@ -286,17 +293,19 @@ app.get('/api/messages', async (req, res) => {
 app.post('/api/messages/read', async (req, res) => {
     try {
         const { userId, contactId } = req.body;
+        console.log('POST /api/messages/read - Datos recibidos:', { userId, contactId });
         if (!userId || !contactId) {
             return res.status(400).json({ error: 'Faltan userId o contactId' });
         }
         const query = `
             UPDATE messages 
             SET isRead = TRUE 
-            WHERE recipientId = $1 AND m.senderId = $2 AND isRead = FALSE
+            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
             RETURNING *;
         `;
         const values = [userId, contactId];
         const { rows } = await pool.query(query, values);
+        console.log('Mensajes marcados como leídos:', rows);
         res.json({ message: 'Mensajes marcados como leídos', updated: rows });
     } catch (err) {
         console.error('Error al marcar mensajes como leídos:', err.stack);
