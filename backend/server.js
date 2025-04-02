@@ -11,7 +11,7 @@ app.use(express.json());
 app.use(cors());
 app.use('/uploads', express.static('uploads'));
 
-// Configurar Multer para subir fotos de perfil
+// Configurar Multer
 const uploadDir = 'uploads';
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -30,7 +30,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 } // Límite de 5MB
+    limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 // Conectar a PostgreSQL
@@ -42,7 +42,6 @@ const pool = new Pool({
 // Inicializar base de datos
 async function initializeDatabase() {
     try {
-        // Crear tabla users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -54,7 +53,6 @@ async function initializeDatabase() {
         `);
         console.log('Tabla "users" verificada o creada exitosamente.');
 
-        // Forzar recreación de messages
         await pool.query(`DROP TABLE IF EXISTS messages CASCADE;`);
         await pool.query(`
             CREATE TABLE messages (
@@ -68,9 +66,8 @@ async function initializeDatabase() {
                 FOREIGN KEY (recipientId) REFERENCES users(id)
             );
         `);
-        console.log('Tabla "messages" recreada exitosamente con TIMESTAMP.');
+        console.log('Tabla "messages" recreada exitosamente.');
 
-        // Forzar recreación de contacts
         await pool.query(`DROP TABLE IF EXISTS contacts CASCADE;`);
         await pool.query(`
             CREATE TABLE contacts (
@@ -84,7 +81,7 @@ async function initializeDatabase() {
         console.log('Tabla "contacts" recreada exitosamente.');
     } catch (err) {
         console.error('Error al inicializar la base de datos:', err.stack);
-        throw err; // Lanza el error para que el servidor no siga si falla
+        throw err;
     }
 }
 
@@ -143,7 +140,7 @@ app.get('/api/contacts', async (req, res) => {
             return res.status(400).json({ error: 'Falta el userId' });
         }
         const query = `
-            SELECT u.id, u.username, u.displayName, u.profilePicture, 
+            SELECT u.id, u.username, COALESCE(u.displayName, u.username) AS displayName, u.profilePicture,
                    (SELECT COUNT(*) 
                     FROM messages m 
                     WHERE m.recipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
@@ -190,17 +187,14 @@ app.post('/api/contacts', async (req, res) => {
     }
 });
 
-// Actualizar perfil (foto y nombre)
+// Actualizar perfil
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
-        console.log('Cuerpo de la solicitud:', req.body);
-        console.log('Archivo recibido:', req.file);
-
         const userId = req.body.userId;
         const displayName = req.body.displayName || null;
         const filePath = req.file ? req.file.path : null;
 
-        console.log('Datos procesados:', { userId, displayName, filePath });
+        console.log('Datos recibidos para actualizar perfil:', { userId, displayName, filePath });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
@@ -226,9 +220,6 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         }
         query += ` WHERE id = $${paramCount} RETURNING *`;
         values.push(userId);
-
-        console.log('Consulta SQL:', query);
-        console.log('Valores:', values);
 
         const { rows } = await pool.query(query, values);
         if (rows.length === 0) {
@@ -284,6 +275,7 @@ app.get('/api/messages', async (req, res) => {
         `;
         const values = [userId, contactId];
         const { rows } = await pool.query(query, values);
+        console.log('Mensajes devueltos:', rows);
         res.json(rows);
     } catch (err) {
         console.error('Error al obtener mensajes:', err.stack);
@@ -318,14 +310,14 @@ const PORT = process.env.PORT || 5432;
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
     try {
-        await pool.query('SELECT 1'); // Prueba simple de conexión
+        await pool.query('SELECT 1');
         console.log('Conexión a la base de datos establecida.');
         await initializeDatabase();
         const { rows } = await pool.query('SELECT NOW()');
         console.log('Base de datos inicializada. Hora actual:', rows[0].now);
     } catch (err) {
         console.error('Error al iniciar el servidor:', err.stack);
-        process.exit(1); // Termina el proceso si falla la inicialización
+        process.exit(1);
     }
 });
 
