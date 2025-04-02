@@ -51,22 +51,37 @@ async function initializeDatabase() {
                 profilePicture TEXT
             );
         `);
-        console.log('Tabla "users" verificada o creada exitosamente.');
+        console.log('Tabla "users" verificada o creada.');
 
+        await pool.query(`DROP TABLE IF EXISTS messages CASCADE;`);
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS messages (
+            CREATE TABLE messages (
                 id SERIAL PRIMARY KEY,
                 senderId TEXT NOT NULL,
                 recipientId TEXT NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT NOW(),
+                isRead BOOLEAN DEFAULT FALSE,
                 FOREIGN KEY (senderId) REFERENCES users(id),
                 FOREIGN KEY (recipientId) REFERENCES users(id)
             );
         `);
-        console.log('Tabla "messages" verificada o creada exitosamente.');
+        console.log('Tabla "messages" recreada.');
+
+        await pool.query(`DROP TABLE IF EXISTS contacts CASCADE;`);
+        await pool.query(`
+            CREATE TABLE contacts (
+                userId TEXT NOT NULL,
+                contactId TEXT NOT NULL,
+                PRIMARY KEY (userId, contactId),
+                FOREIGN KEY (userId) REFERENCES users(id),
+                FOREIGN KEY (contactId) REFERENCES users(id)
+            );
+        `);
+        console.log('Tabla "contacts" recreada.');
     } catch (err) {
-        console.error('Error al inicializar la base de datos:', err);
+        console.error('Error al inicializar la base de datos:', err.stack);
+        throw err;
     }
 }
 
@@ -76,18 +91,18 @@ app.get('/api/test', async (req, res) => {
         const { rows } = await pool.query('SELECT NOW()');
         res.json({ message: '¡El servidor está funcionando!', dbTime: rows[0].now });
     } catch (err) {
-        console.error('Error al conectar a la base de datos:', err);
-        res.status(500).json({ message: 'Error en la base de datos', error: err.message });
+        console.error('Error en /api/test:', err.stack);
+        res.status(500).json({ error: 'Error en la base de datos', details: err.message });
     }
 });
 
-// Obtener usuarios
+// Obtener todos los usuarios (para login)
 app.get('/api/users', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users');
         res.json(rows);
     } catch (err) {
-        console.error('Error al consultar usuarios:', err);
+        console.error('Error al consultar usuarios:', err.stack);
         res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
@@ -95,41 +110,110 @@ app.get('/api/users', async (req, res) => {
 // Crear un usuario
 app.post('/api/users', async (req, res) => {
     try {
-        const { id, username, password, displayName, profilePicture } = req.body;
-        if (!id || !username || !password) {
-            return res.status(400).json({ error: 'Faltan campos requeridos: id, username, password' });
+        const { username, password, displayName, profilePicture } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Faltan username o password' });
         }
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $1, $2, $3, $4)
+            ON CONFLICT (id) DO NOTHING
             RETURNING *;
         `;
-        const values = [id, username, password, displayName || null, profilePicture || null];
+        const values = [username, password, displayName || username, profilePicture || null];
         const { rows } = await pool.query(query, values);
-        res.status(201).json({ message: 'Usuario creado exitosamente', user: rows[0] });
+        if (rows.length === 0) {
+            return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
+        }
+        res.status(201).json({ message: 'Usuario creado', user: rows[0] });
     } catch (err) {
-        console.error('Error al crear usuario:', err);
-        res.status(500).json({ error: 'Error en el servidor al crear usuario', details: err.message });
+        console.error('Error al crear usuario:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
-// Actualizar perfil (foto y nombre)
+// Obtener contactos de un usuario (SOLO LOS AGREGADOS)
+app.get('/api/contacts', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) {
+            return res.status(400).json({ error: 'Falta el userId' });
+        }
+        const query = `
+            SELECT u.id, u.username, COALESCE(u.displayName, u.username) AS displayName, u.profilePicture,
+                   (SELECT COUNT(*) 
+                    FROM messages m 
+                    WHERE m.recipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
+            FROM contacts c
+            JOIN users u ON c.contactId = u.id
+            WHERE c.userId = $1;
+        `;
+        const { rows } = await pool.query(query, [userId]);
+        console.log('Contactos devueltos para userId', userId, ':', rows);
+        res.json(rows);
+    } catch (err) {
+        console.error('Error al obtener contactos:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
+// Agregar un contacto
+app.post('/api/contacts', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        console.log('Intentando agregar contacto:', { userId, contactId });
+        if (!userId || !contactId) {
+            return res.status(400).json({ error: 'Faltan userId o contactId' });
+        }
+        if (userId === contactId) {
+            return res.status(400).json({ error: 'No puedes agregarte a ti mismo' });
+        }
+        const checkUserQuery = 'SELECT id FROM users WHERE id = $1';
+        const userExists = await pool.query(checkUserQuery, [contactId]);
+        if (userExists.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        const query = `
+            INSERT INTO contacts (userId, contactId)
+            VALUES ($1, $2)
+            ON CONFLICT (userId, contactId) DO NOTHING
+            RETURNING *;
+        `;
+        const { rows } = await pool.query(query, [userId, contactId]);
+        res.status(201).json({ message: 'Contacto agregado', contact: rows[0] });
+    } catch (err) {
+        console.error('Error al agregar contacto:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
+// Actualizar perfil
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
         const userId = req.body.userId;
         const displayName = req.body.displayName || null;
+        const filePath = req.file ? req.file.path : null;
+
+        console.log('Actualizando perfil:', { userId, displayName, filePath });
+
+        if (!userId) {
+            return res.status(400).json({ error: 'Falta el userId' });
+        }
+        if (!filePath && !displayName) {
+            return res.status(400).json({ error: 'Debe proporcionar displayName o una foto' });
+        }
+
         let query = 'UPDATE users SET ';
         const values = [];
         let paramCount = 1;
 
-        if (req.file) {
-            const filePath = req.file.path;
+        if (filePath) {
             query += `profilePicture = $${paramCount}`;
             values.push(filePath);
             paramCount++;
         }
         if (displayName) {
-            if (req.file) query += ', ';
+            if (filePath) query += ', ';
             query += `displayName = $${paramCount}`;
             values.push(displayName);
             paramCount++;
@@ -141,9 +225,10 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
-        res.json({ message: 'Perfil actualizado exitosamente', user: rows[0] });
+        console.log('Usuario actualizado:', rows[0]);
+        res.json({ message: 'Perfil actualizado', user: rows[0] });
     } catch (err) {
-        console.error('Error al actualizar perfil:', err);
+        console.error('Error al actualizar perfil:', err.stack);
         res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
@@ -153,19 +238,19 @@ app.post('/api/messages', async (req, res) => {
     try {
         const { senderId, recipientId, content } = req.body;
         if (!senderId || !recipientId || !content) {
-            return res.status(400).json({ error: 'Faltan campos requeridos: senderId, recipientId, content' });
+            return res.status(400).json({ error: 'Faltan senderId, recipientId o content' });
         }
         const query = `
-            INSERT INTO messages (senderId, recipientId, content, timestamp)
-            VALUES ($1, $2, $3, NOW())
+            INSERT INTO messages (senderId, recipientId, content, timestamp, isRead)
+            VALUES ($1, $2, $3, NOW(), FALSE)
             RETURNING *;
         `;
         const values = [senderId, recipientId, content];
         const { rows } = await pool.query(query, values);
-        res.status(201).json({ message: 'Mensaje enviado exitosamente', message: rows[0] });
+        res.status(201).json({ message: 'Mensaje enviado', message: rows[0] });
     } catch (err) {
-        console.error('Error al enviar mensaje:', err);
-        res.status(500).json({ error: 'Error en el servidor al enviar mensaje', details: err.message });
+        console.error('Error al enviar mensaje:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
@@ -174,13 +259,13 @@ app.get('/api/messages', async (req, res) => {
     try {
         const { userId, contactId } = req.query;
         if (!userId || !contactId) {
-            return res.status(400).json({ error: 'Faltan parámetros: userId, contactId' });
+            return res.status(400).json({ error: 'Faltan userId o contactId' });
         }
         const query = `
             SELECT m.*, 
-                   COALESCE(u1.displayName, u1.username) AS senderName, 
+                   COALESCE(u1.displayName, u1.username) AS senderDisplayName, 
                    u1.profilePicture AS senderPicture,
-                   COALESCE(u2.displayName, u2.username) AS recipientName, 
+                   COALESCE(u2.displayName, u2.username) AS recipientDisplayName, 
                    u2.profilePicture AS recipientPicture
             FROM messages m
             JOIN users u1 ON m.senderId = u1.id
@@ -190,10 +275,33 @@ app.get('/api/messages', async (req, res) => {
         `;
         const values = [userId, contactId];
         const { rows } = await pool.query(query, values);
+        console.log('Mensajes devueltos:', rows);
         res.json(rows);
     } catch (err) {
-        console.error('Error al obtener mensajes:', err);
-        res.status(500).json({ error: 'Error en el servidor al obtener mensajes', details: err.message });
+        console.error('Error al obtener mensajes:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
+// Marcar mensajes como leídos
+app.post('/api/messages/read', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId) {
+            return res.status(400).json({ error: 'Faltan userId o contactId' });
+        }
+        const query = `
+            UPDATE messages 
+            SET isRead = TRUE 
+            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
+            RETURNING *;
+        `;
+        const values = [userId, contactId];
+        const { rows } = await pool.query(query, values);
+        res.json({ message: 'Mensajes marcados como leídos', updated: rows });
+    } catch (err) {
+        console.error('Error al marcar mensajes como leídos:', err.stack);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
@@ -202,14 +310,18 @@ const PORT = process.env.PORT || 5432;
 app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
     try {
+        await pool.query('SELECT 1');
+        console.log('Conexión a la base de datos establecida.');
         await initializeDatabase();
         const { rows } = await pool.query('SELECT NOW()');
-        console.log('Conexión a la base de datos exitosa. Hora actual:', rows[0].now);
+        console.log('Base de datos inicializada. Hora actual:', rows[0].now);
     } catch (err) {
-        console.error('Error al iniciar el servidor:', err);
+        console.error('Error al iniciar el servidor:', err.stack);
+        process.exit(1);
     }
 });
 
 process.on('uncaughtException', (err) => {
-    console.error('Error no capturado:', err);
+    console.error('Error no capturado:', err.stack);
+    process.exit(1);
 });
