@@ -116,7 +116,7 @@ app.post('/api/users', async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
-        const finalDisplayName = displayName || username; // Garantiza que displayName no sea null
+        const finalDisplayName = displayName || username; // Usa username si displayName no se envía
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
             VALUES ($1, $1, $2, $3, $4)
@@ -198,9 +198,14 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
     try {
         const userId = req.body.userId;
         const displayName = req.body.displayName;
-        const filePath = req.file ? `/uploads/${req.file.filename}` : null; // Ruta relativa
+        const filePath = req.file ? `/uploads/${req.file.filename}` : null;
 
-        console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, displayName, filePath });
+        console.log('POST /api/upload-profile-picture - Datos recibidos:', { 
+            userId, 
+            displayName, 
+            filePath, 
+            file: req.file ? { filename: req.file.filename, path: req.file.path } : null 
+        });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
