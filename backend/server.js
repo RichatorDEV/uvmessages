@@ -60,11 +60,23 @@ async function initializeDatabase() {
                 recipientId TEXT NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT NOW(),
+                isRead BOOLEAN DEFAULT FALSE,
                 FOREIGN KEY (senderId) REFERENCES users(id),
                 FOREIGN KEY (recipientId) REFERENCES users(id)
             );
         `);
         console.log('Tabla "messages" verificada o creada exitosamente.');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS contacts (
+                userId TEXT NOT NULL,
+                contactId TEXT NOT NULL,
+                PRIMARY KEY (userId, contactId),
+                FOREIGN KEY (userId) REFERENCES users(id),
+                FOREIGN KEY (contactId) REFERENCES users(id)
+            );
+        `);
+        console.log('Tabla "contacts" verificada o creada exitosamente.');
     } catch (err) {
         console.error('Error al inicializar la base de datos:', err);
     }
@@ -81,7 +93,7 @@ app.get('/api/test', async (req, res) => {
     }
 });
 
-// Obtener usuarios
+// Obtener usuarios (solo para registro/login)
 app.get('/api/users', async (req, res) => {
     try {
         const { rows } = await pool.query('SELECT * FROM users');
@@ -117,14 +129,70 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
+// Obtener contactos de un usuario
+app.get('/api/contacts', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) {
+            return res.status(400).json({ error: 'Falta el userId' });
+        }
+        const query = `
+            SELECT u.*, 
+                   (SELECT COUNT(*) 
+                    FROM messages m 
+                    WHERE m.rerecipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
+            FROM contacts c
+            JOIN users u ON c.contactId = u.id
+            WHERE c.userId = $1;
+        `;
+        const { rows } = await pool.query(query, [userId]);
+        res.json(rows);
+    } catch (err) {
+        console.error('Error al obtener contactos:', err);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
+// Agregar un contacto
+app.post('/api/contacts', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId) {
+            return res.status(400).json({ error: 'Faltan userId o contactId' });
+        }
+        if (userId === contactId) {
+            return res.status(400).json({ error: 'No puedes agregarte a ti mismo como contacto' });
+        }
+        const checkUserQuery = 'SELECT id FROM users WHERE id = $1';
+        const userExists = await pool.query(checkUserQuery, [contactId]);
+        if (userExists.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        const query = `
+            INSERT INTO contacts (userId, contactId)
+            VALUES ($1, $2)
+            ON CONFLICT (userId, contactId) DO NOTHING
+            RETURNING *;
+        `;
+        const { rows } = await pool.query(query, [userId, contactId]);
+        res.status(201).json({ message: 'Contacto agregado exitosamente', contact: rows[0] });
+    } catch (err) {
+        console.error('Error al agregar contacto:', err);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+    }
+});
+
 // Actualizar perfil (foto y nombre)
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
     try {
+        console.log('Cuerpo de la solicitud:', req.body);
+        console.log('Archivo recibido:', req.file);
+
         const userId = req.body.userId;
         const displayName = req.body.displayName || null;
         const filePath = req.file ? req.file.path : null;
 
-        console.log('Datos recibidos:', { userId, displayName, filePath });
+        console.log('Datos procesados:', { userId, displayName, filePath });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
@@ -174,8 +242,8 @@ app.post('/api/messages', async (req, res) => {
             return res.status(400).json({ error: 'Faltan campos requeridos: senderId, recipientId, content' });
         }
         const query = `
-            INSERT INTO messages (senderId, recipientId, content, timestamp)
-            VALUES ($1, $2, $3, NOW())
+            INSERT INTO messages (senderId, recipientId, content, timestamp, isRead)
+            VALUES ($1, $2, $3, NOW(), FALSE)
             RETURNING *;
         `;
         const values = [senderId, recipientId, content];
@@ -212,6 +280,28 @@ app.get('/api/messages', async (req, res) => {
     } catch (err) {
         console.error('Error al obtener mensajes:', err);
         res.status(500).json({ error: 'Error en el servidor al obtener mensajes', details: err.message });
+    }
+});
+
+// Marcar mensajes como leídos
+app.post('/api/messages/read', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId) {
+            return res.status(400).json({ error: 'Faltan userId o contactId' });
+        }
+        const query = `
+            UPDATE messages 
+            SET isRead = TRUE 
+            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
+            RETURNING *;
+        `;
+        const values = [userId, contactId];
+        const { rows } = await pool.query(query, values);
+        res.json({ message: 'Mensajes marcados como leídos', updated: rows });
+    } catch (err) {
+        console.error('Error al marcar mensajes como leídos:', err);
+        res.status(500).json({ error: 'Error en el servidor', details: err.message });
     }
 });
 
