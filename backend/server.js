@@ -116,12 +116,12 @@ app.post('/api/users', async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
-        const finalDisplayName = displayName || username;
+        const finalDisplayName = displayName || username; // Garantiza que displayName no sea null
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
             VALUES ($1, $1, $2, $3, $4)
             ON CONFLICT (id) DO NOTHING
-            RETURNING *;
+            RETURNING id, username, displayName, profilePicture;
         `;
         const values = [username, password, finalDisplayName, null];
         const { rows } = await pool.query(query, values);
@@ -198,12 +198,15 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
     try {
         const userId = req.body.userId;
         const displayName = req.body.displayName;
-        const filePath = req.file ? req.file.path : null;
+        const filePath = req.file ? `/uploads/${req.file.filename}` : null; // Ruta relativa
 
         console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, displayName, filePath });
 
         if (!userId) {
             return res.status(400).json({ error: 'Falta el userId' });
+        }
+        if (!displayName && !filePath) {
+            return res.status(400).json({ error: 'Debe proporcionar displayName o una foto' });
         }
 
         let query = 'UPDATE users SET ';
@@ -221,7 +224,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
             values.push(displayName);
             paramCount++;
         }
-        query += ` WHERE id = $${paramCount} RETURNING *`;
+        query += ` WHERE id = $${paramCount} RETURNING id, username, displayName, profilePicture`;
         values.push(userId);
 
         const { rows } = await pool.query(query, values);
