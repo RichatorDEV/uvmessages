@@ -19,6 +19,8 @@ app.get('/uploads/:filename', (req, res) => {
         if (err) {
             console.error('Error al servir archivo:', err);
             res.status(404).send('Archivo no encontrado');
+        } else {
+            console.log('Archivo servido correctamente:', filePath);
         }
     });
 });
@@ -131,7 +133,7 @@ app.post('/api/users', async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
-        const finalDisplayName = displayName || username; // Garantiza valor
+        const finalDisplayName = displayName || username;
         console.log('Usando finalDisplayName:', finalDisplayName);
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
