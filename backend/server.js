@@ -1,367 +1,208 @@
 const express = require('express');
-const { Pool } = require('pg');
-const multer = require('multer');
-const path = require('path');
 const cors = require('cors');
-const fs = require('fs').promises;
+const { Pool } = require('pg');
+const path = require('path');
+const multer = require('multer');
 
 const app = express();
 
-app.use(express.json());
-app.use(cors());
-app.use('/uploads', express.static('uploads'));
+// Configuración de CORS
+app.use(cors({
+    origin: ['https://tu-usuario.github.io', 'http://localhost:3000'], // Reemplaza "tu-usuario" con tu nombre de usuario de GitHub
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type']
+}));
 
-// Servir archivos de /uploads explícitamente
+// Middleware
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Configuración de Multer para subir imágenes
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'public/uploads');
+    },
+    filename: (req, file, cb) => {
+        cb(null, `${Date.now()}-${file.originalname}`);
+    }
+});
+const upload = multer({ storage });
+
+// Conexión a PostgreSQL (ajusta las credenciales según tu Railway)
+const pool = new Pool({
+    user: 'postgres',
+    host: 'tu-host-de-railway',
+    database: 'tu-base-de-datos',
+    password: 'tu-contraseña',
+    port: 5432
+});
+
+// Ruta para servir archivos estáticos (imágenes)
 app.get('/uploads/:filename', (req, res) => {
-    const filePath = path.join(__dirname, 'uploads', req.params.filename);
+    const filePath = path.join(__dirname, 'public/uploads', req.params.filename);
     console.log('Solicitando archivo:', filePath);
     res.sendFile(filePath, (err) => {
         if (err) {
             console.error('Error al servir archivo:', err);
             res.status(404).send('Archivo no encontrado');
-        } else {
-            console.log('Archivo servido correctamente:', filePath);
         }
     });
 });
 
-// Configurar Multer
-const uploadDir = 'uploads';
-const storage = multer.diskStorage({
-    destination: async (req, file, cb) => {
-        try {
-            await fs.mkdir(uploadDir, { recursive: true });
-            console.log('Directorio uploads creado o verificado:', uploadDir);
-            cb(null, uploadDir);
-        } catch (err) {
-            console.error('Error al crear el directorio uploads:', err);
-            cb(err);
-        }
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const fileName = uniqueSuffix + path.extname(file.originalname);
-        console.log('Generando nombre de archivo:', fileName);
-        cb(null, fileName);
-    }
-});
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }
-});
+// Registro de usuario
+app.post('/api/users', async (req, res) => {
+    const { username, password } = req.body;
+    console.log('Registrando usuario:', { username, password });
 
-// Conectar a PostgreSQL
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
-
-// Inicializar base de datos
-async function initializeDatabase() {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                displayName TEXT NOT NULL,
-                profilePicture TEXT
-            );
-        `);
-        console.log('Tabla "users" verificada o creada.');
-
-        await pool.query(`DROP TABLE IF EXISTS messages CASCADE;`);
-        await pool.query(`
-            CREATE TABLE messages (
-                id SERIAL PRIMARY KEY,
-                senderId TEXT NOT NULL,
-                recipientId TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT NOW(),
-                isRead BOOLEAN DEFAULT FALSE,
-                FOREIGN KEY (senderId) REFERENCES users(id),
-                FOREIGN KEY (recipientId) REFERENCES users(id)
-            );
-        `);
-        console.log('Tabla "messages" recreada.');
-
-        await pool.query(`DROP TABLE IF EXISTS contacts CASCADE;`);
-        await pool.query(`
-            CREATE TABLE contacts (
-                userId TEXT NOT NULL,
-                contactId TEXT NOT NULL,
-                PRIMARY KEY (userId, contactId),
-                FOREIGN KEY (userId) REFERENCES users(id),
-                FOREIGN KEY (contactId) REFERENCES users(id)
-            );
-        `);
-        console.log('Tabla "contacts" recreada.');
-    } catch (err) {
-        console.error('Error al inicializar la base de datos:', err.stack);
-        throw err;
-    }
-}
-
-// Ruta de prueba
-app.get('/api/test', async (req, res) => {
-    try {
-        const { rows } = await pool.query('SELECT NOW()');
-        res.json({ message: '¡El servidor está funcionando!', dbTime: rows[0].now });
-    } catch (err) {
-        console.error('Error en /api/test:', err.stack);
-        res.status(500).json({ error: 'Error en la base de datos', details: err.message });
+        const result = await pool.query(
+            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id, username',
+            [username, password]
+        );
+        res.json({ user: result.rows[0] });
+    } catch (error) {
+        console.error('Error al registrar usuario:', error);
+        res.status(500).json({ error: 'Error al registrar usuario' });
     }
 });
 
-// Obtener todos los usuarios (para login)
+// Obtener todos los usuarios
 app.get('/api/users', async (req, res) => {
     try {
-        const { rows } = await pool.query('SELECT id, username, password, displayName, profilePicture FROM users');
-        console.log('GET /api/users - Usuarios devueltos:', rows);
-        res.json(rows);
-    } catch (err) {
-        console.error('Error al consultar usuarios:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+        const result = await pool.query('SELECT id, username, profilePicture FROM users');
+        console.log('Usuarios enviados:', result.rows);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error al obtener usuarios:', error);
+        res.status(500).json({ error: 'Error al obtener usuarios' });
     }
 });
 
-// Crear un usuario
-app.post('/api/users', async (req, res) => {
-    try {
-        const { username, password, displayName } = req.body;
-        console.log('POST /api/users - Datos recibidos:', { username, password, displayName });
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Faltan username o password' });
-        }
-        const finalDisplayName = displayName || username;
-        console.log('Usando finalDisplayName:', finalDisplayName);
-        const query = `
-            INSERT INTO users (id, username, password, displayName, profilePicture)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id, username, displayName, profilePicture;
-        `;
-        const values = [username, username, password, finalDisplayName, null];
-        const { rows } = await pool.query(query, values);
-        if (rows.length === 0) {
-            return res.status(409).json({ error: 'El nombre de usuario ya está en uso' });
-        }
-        console.log('Usuario creado:', rows[0]);
-        res.status(201).json({ message: 'Usuario creado', user: rows[0] });
-    } catch (err) {
-        console.error('Error al crear usuario:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
-    }
-});
-
-// Obtener contactos de un usuario
-app.get('/api/contacts', async (req, res) => {
-    try {
-        const { userId } = req.query;
-        console.log('GET /api/contacts - userId:', userId);
-        if (!userId) {
-            return res.status(400).json({ error: 'Falta el userId' });
-        }
-        const query = `
-            SELECT u.id, u.username, u.displayName, u.profilePicture,
-                   (SELECT COUNT(*) 
-                    FROM messages m 
-                    WHERE m.recipientId = $1 AND m.senderId = u.id AND m.isRead = FALSE) AS unreadCount
-            FROM contacts c
-            JOIN users u ON c.contactId = u.id
-            WHERE c.userId = $1;
-        `;
-        const { rows } = await pool.query(query, [userId]);
-        console.log('Contactos devueltos para userId', userId, ':', rows);
-        res.json(rows);
-    } catch (err) {
-        console.error('Error al obtener contactos:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
-    }
-});
-
-// Agregar un contacto
-app.post('/api/contacts', async (req, res) => {
-    try {
-        const { userId, contactId } = req.body;
-        console.log('POST /api/contacts - Datos recibidos:', { userId, contactId });
-        if (!userId || !contactId) {
-            return res.status(400).json({ error: 'Faltan userId o contactId' });
-        }
-        if (userId === contactId) {
-            return res.status(400).json({ error: 'No puedes agregarte a ti mismo' });
-        }
-        const checkUserQuery = 'SELECT id FROM users WHERE id = $1';
-        const userExists = await pool.query(checkUserQuery, [contactId]);
-        if (userExists.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
-        const query = `
-            INSERT INTO contacts (userId, contactId)
-            VALUES ($1, $2)
-            ON CONFLICT (userId, contactId) DO NOTHING
-            RETURNING *;
-        `;
-        const { rows } = await pool.query(query, [userId, contactId]);
-        console.log('Contacto agregado:', rows[0]);
-        res.status(201).json({ message: 'Contacto agregado', contact: rows[0] });
-    } catch (err) {
-        console.error('Error al agregar contacto:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
-    }
-});
-
-// Actualizar perfil
+// Subir foto de perfil
 app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+    const { userId } = req.body;
+    const profilePicture = req.file ? `/uploads/${req.file.filename}` : null;
+
+    console.log('Subiendo foto para userId:', userId, 'ProfilePicture:', profilePicture);
+
     try {
-        const userId = req.body.userId;
-        const displayName = req.body.displayName;
-        const filePath = req.file ? `/uploads/${req.file.filename}` : null;
-
-        console.log('POST /api/upload-profile-picture - Datos recibidos:', { 
-            userId, 
-            displayName, 
-            filePath, 
-            file: req.file ? { filename: req.file.filename, path: req.file.path } : null 
-        });
-
-        if (!userId) {
-            return res.status(400).json({ error: 'Falta el userId' });
-        }
-
-        const currentUserQuery = 'SELECT displayName FROM users WHERE id = $1';
-        const currentUser = await pool.query(currentUserQuery, [userId]);
-        if (currentUser.rows.length === 0) {
+        const result = await pool.query(
+            'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING id, username, profilePicture',
+            [profilePicture, userId]
+        );
+        if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
-        console.log('Usuario actual antes de actualizar:', currentUser.rows[0]);
-
-        let query = 'UPDATE users SET ';
-        const values = [];
-        let paramCount = 1;
-
-        if (filePath) {
-            query += `profilePicture = $${paramCount}`;
-            values.push(filePath);
-            paramCount++;
-        }
-        if (displayName) {
-            if (filePath) query += ', ';
-            query += `displayName = $${paramCount}`;
-            values.push(displayName);
-            paramCount++;
-        } else {
-            if (filePath) query += ', ';
-            query += `displayName = $${paramCount}`;
-            values.push(currentUser.rows[0].displayName);
-            paramCount++;
-        }
-        query += ` WHERE id = $${paramCount} RETURNING id, username, displayName, profilePicture`;
-        values.push(userId);
-
-        const { rows } = await pool.query(query, values);
-        console.log('Usuario actualizado:', rows[0]);
-        res.json({ message: 'Perfil actualizado', user: rows[0] });
-    } catch (err) {
-        console.error('Error al actualizar perfil:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+        res.json({ user: result.rows[0] });
+    } catch (error) {
+        console.error('Error al actualizar foto de perfil:', error);
+        res.status(500).json({ error: 'Error al actualizar foto de perfil' });
     }
 });
 
-// Enviar un mensaje
+// Agregar contacto
+app.post('/api/contacts', async (req, res) => {
+    const { userId, contactId } = req.body;
+    console.log('Agregando contacto:', { userId, contactId });
+
+    try {
+        const contactExists = await pool.query('SELECT id FROM users WHERE username = $1', [contactId]);
+        if (contactExists.rows.length === 0) {
+            return res.status(404).json({ error: 'Contacto no encontrado' });
+        }
+
+        const contactIdNum = contactExists.rows[0].id;
+        const result = await pool.query(
+            'INSERT INTO contacts (user_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *',
+            [userId, contactIdNum]
+        );
+        res.json({ contact: result.rows[0] });
+    } catch (error) {
+        console.error('Error al agregar contacto:', error);
+        res.status(500).json({ error: 'Error al agregar contacto' });
+    }
+});
+
+// Obtener contactos
+app.get('/api/contacts', async (req, res) => {
+    const { userId } = req.query;
+    console.log('Obteniendo contactos para userId:', userId);
+
+    try {
+        const result = await pool.query(`
+            SELECT u.id, u.username, u.profilePicture, 
+                   (SELECT COUNT(*) FROM messages m 
+                    WHERE m.recipient_id = $1 AND m.sender_id = u.id AND m.read = false) AS unreadCount
+            FROM contacts c
+            JOIN users u ON c.contact_id = u.id
+            WHERE c.user_id = $1
+        `, [userId]);
+        console.log('Contactos enviados:', result.rows);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error al obtener contactos:', error);
+        res.status(500).json({ error: 'Error al obtener contactos' });
+    }
+});
+
+// Enviar mensaje
 app.post('/api/messages', async (req, res) => {
+    const { senderId, recipientId, content } = req.body;
+    console.log('Enviando mensaje:', { senderId, recipientId, content });
+
     try {
-        const { senderId, recipientId, content } = req.body;
-        console.log('POST /api/messages - Datos recibidos:', { senderId, recipientId, content });
-        if (!senderId || !recipientId || !content) {
-            return res.status(400).json({ error: 'Faltan senderId, recipientId o content' });
-        }
-        const query = `
-            INSERT INTO messages (senderId, recipientId, content, timestamp, isRead)
-            VALUES ($1, $2, $3, NOW(), FALSE)
-            RETURNING *;
-        `;
-        const values = [senderId, recipientId, content];
-        const { rows } = await pool.query(query, values);
-        console.log('Mensaje enviado:', rows[0]);
-        res.status(201).json({ message: 'Mensaje enviado', message: rows[0] });
-    } catch (err) {
-        console.error('Error al enviar mensaje:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+        const result = await pool.query(
+            'INSERT INTO messages (sender_id, recipient_id, content) VALUES ($1, $2, $3) RETURNING *',
+            [senderId, recipientId, content]
+        );
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error al enviar mensaje:', error);
+        res.status(500).json({ error: 'Error al enviar mensaje' });
     }
 });
 
-// Obtener mensajes entre dos usuarios
+// Obtener mensajes
 app.get('/api/messages', async (req, res) => {
+    const { userId, contactId } = req.query;
+    console.log('Obteniendo mensajes entre:', { userId, contactId });
+
     try {
-        const { userId, contactId } = req.query;
-        console.log('GET /api/messages - Parámetros:', { userId, contactId });
-        if (!userId || !contactId) {
-            return res.status(400).json({ error: 'Faltan userId o contactId' });
-        }
-        const query = `
-            SELECT m.*, 
-                   u1.displayName AS senderDisplayName, 
-                   u1.profilePicture AS senderPicture,
-                   u2.displayName AS recipientDisplayName, 
-                   u2.profilePicture AS recipientPicture
+        const result = await pool.query(`
+            SELECT m.id, m.sender_id, m.recipient_id, m.content, m.timestamp, m.read,
+                   u.profilePicture AS senderPicture
             FROM messages m
-            JOIN users u1 ON m.senderId = u1.id
-            JOIN users u2 ON m.recipientId = u2.id
-            WHERE (m.senderId = $1 AND m.recipientId = $2) OR (m.senderId = $2 AND m.recipientId = $1)
-            ORDER BY m.timestamp ASC;
-        `;
-        const values = [userId, contactId];
-        const { rows } = await pool.query(query, values);
-        console.log('Mensajes devueltos:', rows);
-        res.json(rows);
-    } catch (err) {
-        console.error('Error al obtener mensajes:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+            LEFT JOIN users u ON m.sender_id = u.id
+            WHERE (m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)
+            ORDER BY m.timestamp ASC
+        `, [userId, contactId]);
+        console.log('Mensajes enviados:', result.rows);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error al obtener mensajes:', error);
+        res.status(500).json({ error: 'Error al obtener mensajes' });
     }
 });
 
 // Marcar mensajes como leídos
 app.post('/api/messages/read', async (req, res) => {
+    const { userId, contactId } = req.body;
+    console.log('Marcando mensajes como leídos:', { userId, contactId });
+
     try {
-        const { userId, contactId } = req.body;
-        console.log('POST /api/messages/read - Datos recibidos:', { userId, contactId });
-        if (!userId || !contactId) {
-            return res.status(400).json({ error: 'Faltan userId o contactId' });
-        }
-        const query = `
-            UPDATE messages 
-            SET isRead = TRUE 
-            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
-            RETURNING *;
-        `;
-        const values = [userId, contactId];
-        const { rows } = await pool.query(query, values);
-        console.log('Mensajes marcados como leídos:', rows);
-        res.json({ message: 'Mensajes marcados como leídos', updated: rows });
-    } catch (err) {
-        console.error('Error al marcar mensajes como leídos:', err.stack);
-        res.status(500).json({ error: 'Error en el servidor', details: err.message });
+        const result = await pool.query(
+            'UPDATE messages SET read = true WHERE recipient_id = $1 AND sender_id = $2 AND read = false RETURNING *',
+            [userId, contactId]
+        );
+        res.json({ updated: result.rowCount });
+    } catch (error) {
+        console.error('Error al marcar mensajes como leídos:', error);
+        res.status(500).json({ error: 'Error al marcar mensajes como leídos' });
     }
 });
 
 // Iniciar servidor
-const PORT = process.env.PORT || 5432;
-app.listen(PORT, async () => {
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-    try {
-        await pool.query('SELECT 1');
-        console.log('Conexión a la base de datos establecida.');
-        await initializeDatabase();
-        const { rows } = await pool.query('SELECT NOW()');
-        console.log('Base de datos inicializada. Hora actual:', rows[0].now);
-    } catch (err) {
-        console.error('Error al iniciar el servidor:', err.stack);
-        process.exit(1);
-    }
-});
-
-process.on('uncaughtException', (err) => {
-    console.error('Error no capturado:', err.stack);
-    process.exit(1);
 });
