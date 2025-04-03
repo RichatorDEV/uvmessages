@@ -28,12 +28,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Conexión a PostgreSQL (ajusta las credenciales según tu Railway)
+// Conexión a PostgreSQL con las credenciales de Railway
 const pool = new Pool({
     user: 'postgres',
-    host: 'tu-host-de-railway',
-    database: 'tu-base-de-datos',
-    password: 'tu-contraseña',
+    host: 'postgres.railway.internal',
+    database: 'railway',
+    password: 'bvWbxlacTurABfHGKFmaLDxuUstLdKia',
     port: 5432
 });
 
