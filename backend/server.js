@@ -8,7 +8,7 @@ const app = express();
 
 // Configuración de CORS
 app.use(cors({
-    origin: ['https://tu-usuario.github.io', 'http://localhost:3000'], // Reemplaza "tu-usuario" con tu nombre de usuario de GitHub
+    origin: ['https://richatordev.github.io/uvmessages.a/', 'http://localhost:3000'], // Dominio de GitHub Pages añadido
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
