@@ -162,7 +162,7 @@ app.post('/api/messages', async (req, res) => {
     }
 });
 
-// Obtener mensajes
+// Obtener mensajes (incluyendo username del remitente)
 app.get('/api/messages', async (req, res) => {
     const { userId, contactId } = req.query;
     console.log('Obteniendo mensajes entre:', { userId, contactId });
@@ -170,7 +170,7 @@ app.get('/api/messages', async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT m.id, m.sender_id, m.recipient_id, m.content, m.timestamp, m.read,
-                   u.profilePicture AS senderPicture
+                   u.username AS sender_username, u.profilePicture AS sender_picture
             FROM messages m
             LEFT JOIN users u ON m.sender_id = u.id
             WHERE (m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)
