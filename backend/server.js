@@ -11,12 +11,25 @@ app.use(express.json());
 app.use(cors());
 app.use('/uploads', express.static('uploads'));
 
+// Servir archivos de /uploads explícitamente
+app.get('/uploads/:filename', (req, res) => {
+    const filePath = path.join(__dirname, 'uploads', req.params.filename);
+    console.log('Solicitando archivo:', filePath);
+    res.sendFile(filePath, (err) => {
+        if (err) {
+            console.error('Error al servir archivo:', err);
+            res.status(404).send('Archivo no encontrado');
+        }
+    });
+});
+
 // Configurar Multer
 const uploadDir = 'uploads';
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
             await fs.mkdir(uploadDir, { recursive: true });
+            console.log('Directorio uploads creado o verificado:', uploadDir);
             cb(null, uploadDir);
         } catch (err) {
             console.error('Error al crear el directorio uploads:', err);
@@ -25,7 +38,9 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
+        const fileName = uniqueSuffix + path.extname(file.originalname);
+        console.log('Generando nombre de archivo:', fileName);
+        cb(null, fileName);
     }
 });
 const upload = multer({ 
@@ -117,6 +132,7 @@ app.post('/api/users', async (req, res) => {
             return res.status(400).json({ error: 'Faltan username o password' });
         }
         const finalDisplayName = displayName || username; // Garantiza valor
+        console.log('Usando finalDisplayName:', finalDisplayName);
         const query = `
             INSERT INTO users (id, username, password, displayName, profilePicture)
             VALUES ($1, $2, $3, $4, $5)
@@ -211,12 +227,12 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
             return res.status(400).json({ error: 'Falta el userId' });
         }
 
-        // Obtener usuario actual para no sobrescribir displayName con null
         const currentUserQuery = 'SELECT displayName FROM users WHERE id = $1';
         const currentUser = await pool.query(currentUserQuery, [userId]);
         if (currentUser.rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
+        console.log('Usuario actual antes de actualizar:', currentUser.rows[0]);
 
         let query = 'UPDATE users SET ';
         const values = [];
@@ -235,7 +251,7 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         } else {
             if (filePath) query += ', ';
             query += `displayName = $${paramCount}`;
-            values.push(currentUser.rows[0].displayName); // Mantener displayName existente
+            values.push(currentUser.rows[0].displayName);
             paramCount++;
         }
         query += ` WHERE id = $${paramCount} RETURNING id, username, displayName, profilePicture`;
@@ -314,7 +330,7 @@ app.post('/api/messages/read', async (req, res) => {
         const query = `
             UPDATE messages 
             SET isRead = TRUE 
-            WHERE recipientId = $1 AND senderId = $2 AND m.isRead = FALSE
+            WHERE recipientId = $1 AND senderId = $2 AND isRead = FALSE
             RETURNING *;
         `;
         const values = [userId, contactId];
