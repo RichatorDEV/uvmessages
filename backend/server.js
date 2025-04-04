@@ -6,18 +6,15 @@ const multer = require('multer');
 
 const app = express();
 
-// Configuración de CORS (abierto a todos temporalmente)
 app.use(cors({
-    origin: '*', // Permitir todas las solicitudes (prueba temporal)
+    origin: '*',
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
 
-// Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Configuración de Multer para subir imágenes
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, 'public/uploads');
@@ -28,7 +25,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Conexión a PostgreSQL con las credenciales de Railway
 const pool = new Pool({
     user: 'postgres',
     host: 'postgres.railway.internal',
@@ -37,27 +33,21 @@ const pool = new Pool({
     port: 5432
 });
 
-// Ruta para servir archivos estáticos (imágenes)
-app.get('/uploads/:filename', (req, res) => {
-    const filePath = path.join(__dirname, 'public/uploads', req.params.filename);
-    console.log('Solicitando archivo:', filePath);
-    res.sendFile(filePath, (err) => {
-        if (err) {
-            console.error('Error al servir archivo:', err);
-            res.status(404).send('Archivo no encontrado');
-        }
-    });
-});
-
 // Registro de usuario
 app.post('/api/users', async (req, res) => {
     const { username, password } = req.body;
     console.log('Registrando usuario:', { username, password });
 
     try {
+        const lastIdResult = await pool.query('SELECT MAX(id) FROM users');
+        const lastId = lastIdResult.rows[0].max || 0;
+        const newId = lastId + 1;
+
+        console.log('Generando nuevo id:', newId);
+
         const result = await pool.query(
-            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id, username',
-            [username, password]
+            'INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING id, username',
+            [newId, username, password]
         );
         res.json({ user: result.rows[0] });
     } catch (error) {
@@ -112,9 +102,13 @@ app.post('/api/contacts', async (req, res) => {
         }
 
         const contactIdNum = contactExists.rows[0].id;
+        const lastIdResult = await pool.query('SELECT MAX(id) FROM contacts');
+        const lastId = lastIdResult.rows[0].max || 0;
+        const newId = lastId + 1;
+
         const result = await pool.query(
-            'INSERT INTO contacts (user_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *',
-            [userId, contactIdNum]
+            'INSERT INTO contacts (id, user_id, contact_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING *',
+            [newId, userId, contactIdNum]
         );
         res.json({ contact: result.rows[0] });
     } catch (error) {
@@ -151,9 +145,13 @@ app.post('/api/messages', async (req, res) => {
     console.log('Enviando mensaje:', { senderId, recipientId, content });
 
     try {
+        const lastIdResult = await pool.query('SELECT MAX(id) FROM messages');
+        const lastId = lastIdResult.rows[0].max || 0;
+        const newId = lastId + 1;
+
         const result = await pool.query(
-            'INSERT INTO messages (sender_id, recipient_id, content) VALUES ($1, $2, $3) RETURNING *',
-            [senderId, recipientId, content]
+            'INSERT INTO messages (id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4) RETURNING *',
+            [newId, senderId, recipientId, content]
         );
         res.json(result.rows[0]);
     } catch (error) {
@@ -162,7 +160,7 @@ app.post('/api/messages', async (req, res) => {
     }
 });
 
-// Obtener mensajes (incluyendo username del remitente)
+// Obtener mensajes
 app.get('/api/messages', async (req, res) => {
     const { userId, contactId } = req.query;
     console.log('Obteniendo mensajes entre:', { userId, contactId });
@@ -191,7 +189,7 @@ app.post('/api/messages/read', async (req, res) => {
 
     try {
         const result = await pool.query(
-            'UPDATE messages SET read = true WHERE recipient_id = $1 AND m.sender_id = $2 AND read = false RETURNING *',
+            'UPDATE messages SET read = true WHERE recipient_id = $1 AND sender_id = $2 AND read = false RETURNING *',
             [userId, contactId]
         );
         res.json({ updated: result.rowCount });
