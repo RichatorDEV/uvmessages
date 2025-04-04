@@ -6,9 +6,9 @@ const multer = require('multer');
 
 const app = express();
 
-// Configuración de CORS
+// Configuración de CORS (abierto a todos temporalmente)
 app.use(cors({
-    origin: ['https://richatordev.github.io/uvmessages.a/', 'http://localhost:3000'], // Dominio de GitHub Pages añadido
+    origin: '*', // Permitir todas las solicitudes (prueba temporal)
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
@@ -191,7 +191,7 @@ app.post('/api/messages/read', async (req, res) => {
 
     try {
         const result = await pool.query(
-            'UPDATE messages SET read = true WHERE recipient_id = $1 AND sender_id = $2 AND read = false RETURNING *',
+            'UPDATE messages SET read = true WHERE recipient_id = $1 AND m.sender_id = $2 AND read = false RETURNING *',
             [userId, contactId]
         );
         res.json({ updated: result.rowCount });
