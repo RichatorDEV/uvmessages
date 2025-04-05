@@ -43,7 +43,7 @@ app.post('/api/users', async (req, res) => {
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
 
-        console.log('Generando nuevo id:', newId);
+        console.log('Generando nuevo id para users:', newId);
 
         const result = await pool.query(
             'INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING id, username',
@@ -106,6 +106,8 @@ app.post('/api/contacts', async (req, res) => {
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
 
+        console.log('Generando nuevo id para contacts:', newId);
+
         const result = await pool.query(
             'INSERT INTO contacts (id, user_id, contact_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING *',
             [newId, userId, contactIdNum]
@@ -148,6 +150,8 @@ app.post('/api/messages', async (req, res) => {
         const lastIdResult = await pool.query('SELECT MAX(id) FROM messages');
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
+
+        console.log('Generando nuevo id para messages:', newId);
 
         const result = await pool.query(
             'INSERT INTO messages (id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4) RETURNING *',
