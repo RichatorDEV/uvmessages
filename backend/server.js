@@ -3,6 +3,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const path = require('path');
 const multer = require('multer');
+const fs = require('fs');
 
 const app = express();
 
@@ -14,6 +15,12 @@ app.use(cors({
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Crear directorio uploads si no existe
+const uploadDir = path.join(__dirname, 'public/uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -53,11 +60,11 @@ app.post('/api/users', async (req, res) => {
         res.json({ user: result.rows[0] });
     } catch (error) {
         console.error('Error al registrar usuario:', error);
-        res.status(500).json({ error: 'Error al registrar usuario' });
+        res.status(500).json({ error: 'Error al registrar usuario', details: error.message });
     }
 });
 
-// Obtener todos los usuarios (incluye password)
+// Obtener todos los usuarios
 app.get('/api/users', async (req, res) => {
     console.log('GET /api/users - Solicitando lista de usuarios');
     try {
@@ -66,7 +73,7 @@ app.get('/api/users', async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener usuarios:', error);
-        res.status(500).json({ error: 'Error al obtener usuarios' });
+        res.status(500).json({ error: 'Error al obtener usuarios', details: error.message });
     }
 });
 
@@ -75,7 +82,11 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
     const { userId } = req.body;
     const profilePicture = req.file ? `/uploads/${req.file.filename}` : null;
 
-    console.log('Subiendo foto para userId:', userId, 'ProfilePicture:', profilePicture);
+    console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, profilePicture, file: req.file });
+
+    if (!userId) {
+        return res.status(400).json({ error: 'Falta userId' });
+    }
 
     try {
         const result = await pool.query(
@@ -85,10 +96,11 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
+        console.log('Foto de perfil actualizada:', result.rows[0]);
         res.json({ user: result.rows[0] });
     } catch (error) {
         console.error('Error al actualizar foto de perfil:', error);
-        res.status(500).json({ error: 'Error al actualizar foto de perfil' });
+        res.status(500).json({ error: 'Error al actualizar foto de perfil', details: error.message });
     }
 });
 
@@ -117,7 +129,7 @@ app.post('/api/contacts', async (req, res) => {
         res.json({ contact: result.rows[0] });
     } catch (error) {
         console.error('Error al agregar contacto:', error);
-        res.status(500).json({ error: 'Error al agregar contacto' });
+        res.status(500).json({ error: 'Error al agregar contacto', details: error.message });
     }
 });
 
@@ -139,14 +151,18 @@ app.get('/api/contacts', async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener contactos:', error);
-        res.status(500).json({ error: 'Error al obtener contactos' });
+        res.status(500).json({ error: 'Error al obtener contactos', details: error.message });
     }
 });
 
 // Enviar mensaje
 app.post('/api/messages', async (req, res) => {
     const { senderId, recipientId, content } = req.body;
-    console.log('Enviando mensaje:', { senderId, recipientId, content });
+    console.log('POST /api/messages - Enviando mensaje:', { senderId, recipientId, content });
+
+    if (!senderId || !recipientId || !content) {
+        return res.status(400).json({ error: 'Faltan datos requeridos' });
+    }
 
     try {
         const lastIdResult = await pool.query('SELECT MAX(id) FROM messages');
@@ -159,17 +175,22 @@ app.post('/api/messages', async (req, res) => {
             'INSERT INTO messages (id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4) RETURNING *',
             [newId, senderId, recipientId, content]
         );
+        console.log('Mensaje enviado con éxito:', result.rows[0]);
         res.json(result.rows[0]);
     } catch (error) {
         console.error('Error al enviar mensaje:', error);
-        res.status(500).json({ error: 'Error al enviar mensaje' });
+        res.status(500).json({ error: 'Error al enviar mensaje', details: error.message });
     }
 });
 
 // Obtener mensajes
 app.get('/api/messages', async (req, res) => {
     const { userId, contactId } = req.query;
-    console.log('Obteniendo mensajes entre:', { userId, contactId });
+    console.log('GET /api/messages - Obteniendo mensajes entre:', { userId, contactId });
+
+    if (!userId || !contactId) {
+        return res.status(400).json({ error: 'Faltan userId o contactId' });
+    }
 
     try {
         const result = await pool.query(`
@@ -184,7 +205,7 @@ app.get('/api/messages', async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener mensajes:', error);
-        res.status(500).json({ error: 'Error al obtener mensajes' });
+        res.status(500).json({ error: 'Error al obtener mensajes', details: error.message });
     }
 });
 
@@ -201,7 +222,7 @@ app.post('/api/messages/read', async (req, res) => {
         res.json({ updated: result.rowCount });
     } catch (error) {
         console.error('Error al marcar mensajes como leídos:', error);
-        res.status(500).json({ error: 'Error al marcar mensajes como leídos' });
+        res.status(500).json({ error: 'Error al marcar mensajes como leídos', details: error.message });
     }
 });
 
