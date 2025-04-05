@@ -36,7 +36,7 @@ const pool = new Pool({
 // Registro de usuario
 app.post('/api/users', async (req, res) => {
     const { username, password } = req.body;
-    console.log('Registrando usuario:', { username, password });
+    console.log('POST /api/users - Registrando usuario:', { username, password });
 
     try {
         const lastIdResult = await pool.query('SELECT MAX(id) FROM users');
@@ -49,6 +49,7 @@ app.post('/api/users', async (req, res) => {
             'INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING id, username',
             [newId, username, password]
         );
+        console.log('Usuario registrado con éxito:', result.rows[0]);
         res.json({ user: result.rows[0] });
     } catch (error) {
         console.error('Error al registrar usuario:', error);
@@ -56,10 +57,11 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Obtener todos los usuarios
+// Obtener todos los usuarios (incluye password)
 app.get('/api/users', async (req, res) => {
+    console.log('GET /api/users - Solicitando lista de usuarios');
     try {
-        const result = await pool.query('SELECT id, username, profilePicture FROM users');
+        const result = await pool.query('SELECT id, username, password, profilePicture FROM users');
         console.log('Usuarios enviados:', result.rows);
         res.json(result.rows);
     } catch (error) {
