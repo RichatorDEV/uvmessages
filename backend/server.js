@@ -9,10 +9,9 @@ const app = express();
 
 app.use(cors({
     origin: '*',
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type']
 }));
-
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -40,21 +39,78 @@ const pool = new Pool({
     port: 5432
 });
 
+// Middleware para verificar si el usuario está baneado
+async function checkBanned(req, res, next) {
+    const { userId } = req.body || req.query;
+    if (!userId) {
+        return res.status(400).json({ error: 'Falta userId' });
+    }
+    try {
+        const result = await pool.query('SELECT is_banned, ban_expiration FROM users WHERE id = $1', [userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        const user = result.rows[0];
+        if (user.is_banned) {
+            if (!user.ban_expiration || new Date(user.ban_expiration) > new Date()) {
+                return res.status(403).json({ error: 'Estás baneado. Contacta a un administrador.' });
+            } else {
+                // Si el baneo ha expirado, actualizar el estado
+                await pool.query('UPDATE users SET is_banned = FALSE, ban_expiration = NULL WHERE id = $1', [userId]);
+            }
+        }
+        next();
+    } catch (error) {
+        console.error('Error en checkBanned:', error);
+        res.status(500).json({ error: 'Error al verificar estado de baneo', details: error.message });
+    }
+}
+
+// Crear/modificar tablas
+app.post('/api/create-tables', async (req, res) => {
+    console.log('POST /api/create-tables - Creando/modificando tablas');
+    try {
+        // Crear tabla users si no existe
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                profilePicture VARCHAR(255),
+                role VARCHAR(20) DEFAULT 'user',
+                is_banned BOOLEAN DEFAULT FALSE,
+                ban_expiration TIMESTAMP
+            )
+        `);
+        // Agregar columnas si no existen
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user',
+            ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS ban_expiration TIMESTAMP
+        `);
+        res.json({ success: true, message: 'Tablas creadas/modificadas correctamente' });
+    } catch (error) {
+        console.error('Error al crear/modificar tablas:', error);
+        res.status(500).json({ error: 'Error al crear/modificar tablas', details: error.message });
+    }
+});
+
 // Registro de usuario
 app.post('/api/users', async (req, res) => {
     const { username, password } = req.body;
-    console.log('POST /api/users - Registrando usuario:', { username, password });
-
+    console.log('POST /api/users - Registrando usuario:', { username });
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Faltan username o password' });
+    }
     try {
         const lastIdResult = await pool.query('SELECT MAX(id) FROM users');
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
 
-        console.log('Generando nuevo id para users:', newId);
-
         const result = await pool.query(
-            'INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING id, username',
-            [newId, username, password]
+            'INSERT INTO users (id, username, password, role, is_banned, ban_expiration) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, role',
+            [newId, username, password, 'user', false, null]
         );
         console.log('Usuario registrado con éxito:', result.rows[0]);
         res.json({ user: result.rows[0] });
@@ -68,7 +124,7 @@ app.post('/api/users', async (req, res) => {
 app.get('/api/users', async (req, res) => {
     console.log('GET /api/users - Solicitando lista de usuarios');
     try {
-        const result = await pool.query('SELECT id, username, password, profilePicture FROM users');
+        const result = await pool.query('SELECT id, username, profilePicture, role FROM users');
         console.log('Usuarios enviados:', result.rows);
         res.json(result.rows);
     } catch (error) {
@@ -78,19 +134,19 @@ app.get('/api/users', async (req, res) => {
 });
 
 // Subir foto de perfil
-app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+app.post('/api/upload-profile-picture', upload.single('profilePicture'), checkBanned, async (req, res) => {
     const { userId } = req.body;
     const profilePicture = req.file ? `/uploads/${req.file.filename}` : null;
 
-    console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, profilePicture, file: req.file });
+    console.log('POST /api/upload-profile-picture - Datos recibidos:', { userId, profilePicture });
 
-    if (!userId) {
-        return res.status(400).json({ error: 'Falta userId' });
+    if (!userId || !profilePicture) {
+        return res.status(400).json({ error: 'Falta userId o profilePicture' });
     }
 
     try {
         const result = await pool.query(
-            'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING id, username, profilePicture',
+            'UPDATE users SET profilePicture = $1 WHERE id = $2 RETURNING id, username, profilePicture, role',
             [profilePicture, userId]
         );
         if (result.rows.length === 0) {
@@ -105,12 +161,12 @@ app.post('/api/upload-profile-picture', upload.single('profilePicture'), async (
 });
 
 // Agregar contacto
-app.post('/api/contacts', async (req, res) => {
+app.post('/api/contacts', checkBanned, async (req, res) => {
     const { userId, contactId } = req.body;
-    console.log('Agregando contacto:', { userId, contactId });
+    console.log('POST /api/contacts - Agregando contacto:', { userId, contactId });
 
     try {
-        const contactExists = await pool.query('SELECT id FROM users WHERE username = $1', [contactId]);
+        const contactExists = await pool.query('SELECT id, role FROM users WHERE username = $1', [contactId]);
         if (contactExists.rows.length === 0) {
             return res.status(404).json({ error: 'Contacto no encontrado' });
         }
@@ -120,13 +176,11 @@ app.post('/api/contacts', async (req, res) => {
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
 
-        console.log('Generando nuevo id para contacts:', newId);
-
         const result = await pool.query(
             'INSERT INTO contacts (id, user_id, contact_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING *',
             [newId, userId, contactIdNum]
         );
-        res.json({ contact: result.rows[0] });
+        res.json({ contact: { ...result.rows[0], role: contactExists.rows[0].role } });
     } catch (error) {
         console.error('Error al agregar contacto:', error);
         res.status(500).json({ error: 'Error al agregar contacto', details: error.message });
@@ -134,13 +188,13 @@ app.post('/api/contacts', async (req, res) => {
 });
 
 // Obtener contactos
-app.get('/api/contacts', async (req, res) => {
+app.get('/api/contacts', checkBanned, async (req, res) => {
     const { userId } = req.query;
-    console.log('Obteniendo contactos para userId:', userId);
+    console.log('GET /api/contacts - Obteniendo contactos para userId:', userId);
 
     try {
         const result = await pool.query(`
-            SELECT u.id, u.username, u.profilePicture, 
+            SELECT u.id, u.username, u.profilePicture, u.role,
                    (SELECT COUNT(*) FROM messages m 
                     WHERE m.recipient_id = $1 AND m.sender_id = u.id AND m.read = false) AS unreadCount
             FROM contacts c
@@ -156,7 +210,7 @@ app.get('/api/contacts', async (req, res) => {
 });
 
 // Enviar mensaje
-app.post('/api/messages', async (req, res) => {
+app.post('/api/messages', checkBanned, async (req, res) => {
     const { senderId, recipientId, content } = req.body;
     console.log('POST /api/messages - Enviando mensaje:', { senderId, recipientId, content });
 
@@ -165,11 +219,22 @@ app.post('/api/messages', async (req, res) => {
     }
 
     try {
+        // Verificar si el destinatario está baneado
+        const recipient = await pool.query('SELECT is_banned, ban_expiration FROM users WHERE id = $1', [recipientId]);
+        if (recipient.rows.length === 0) {
+            return res.status(404).json({ error: 'Destinatario no encontrado' });
+        }
+        if (recipient.rows[0].is_banned) {
+            if (!recipient.rows[0].ban_expiration || new Date(recipient.rows[0].ban_expiration) > new Date()) {
+                return res.status(403).json({ error: 'El destinatario está baneado' });
+            } else {
+                await pool.query('UPDATE users SET is_banned = FALSE, ban_expiration = NULL WHERE id = $1', [recipientId]);
+            }
+        }
+
         const lastIdResult = await pool.query('SELECT MAX(id) FROM messages');
         const lastId = lastIdResult.rows[0].max || 0;
         const newId = lastId + 1;
-
-        console.log('Generando nuevo id para messages:', newId);
 
         const result = await pool.query(
             'INSERT INTO messages (id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4) RETURNING *',
@@ -184,7 +249,7 @@ app.post('/api/messages', async (req, res) => {
 });
 
 // Obtener mensajes
-app.get('/api/messages', async (req, res) => {
+app.get('/api/messages', checkBanned, async (req, res) => {
     const { userId, contactId } = req.query;
     console.log('GET /api/messages - Obteniendo mensajes entre:', { userId, contactId });
 
@@ -195,7 +260,7 @@ app.get('/api/messages', async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT m.id, m.sender_id, m.recipient_id, m.content, m.timestamp, m.read,
-                   u.username AS sender_username, u.profilePicture AS sender_picture
+                   u.username AS sender_username, u.profilePicture AS sender_picture, u.role
             FROM messages m
             LEFT JOIN users u ON m.sender_id = u.id
             WHERE (m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)
@@ -210,9 +275,9 @@ app.get('/api/messages', async (req, res) => {
 });
 
 // Marcar mensajes como leídos
-app.post('/api/messages/read', async (req, res) => {
+app.post('/api/messages/read', checkBanned, async (req, res) => {
     const { userId, contactId } = req.body;
-    console.log('Marcando mensajes como leídos:', { userId, contactId });
+    console.log('POST /api/messages/read - Marcando mensajes como leídos:', { userId, contactId });
 
     try {
         const result = await pool.query(
@@ -226,8 +291,68 @@ app.post('/api/messages/read', async (req, res) => {
     }
 });
 
+// Banear usuario
+app.post('/api/ban-user', checkBanned, async (req, res) => {
+    const { adminId, targetUsername, duration } = req.body;
+    console.log('POST /api/ban-user - Intentando banear:', { adminId, targetUsername, duration });
+
+    if (!adminId || !targetUsername) {
+        return res.status(400).json({ error: 'Faltan adminId o targetUsername' });
+    }
+
+    try {
+        // Verificar si el usuario es admin
+        const adminResult = await pool.query('SELECT role FROM users WHERE id = $1', [adminId]);
+        if (adminResult.rows.length === 0 || adminResult.rows[0].role !== 'admin') {
+            return res.status(403).json({ error: 'No tienes permiso para banear usuarios' });
+        }
+
+        // Verificar si el usuario objetivo existe
+        const targetResult = await pool.query('SELECT id FROM users WHERE username = $1', [targetUsername]);
+        if (targetResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario objetivo no encontrado' });
+        }
+
+        const targetId = targetResult.rows[0].id;
+        const banExpiration = duration ? new Date(Date.now() + duration * 60 * 1000) : null;
+
+        await pool.query(
+            'UPDATE users SET is_banned = TRUE, ban_expiration = $1 WHERE id = $2',
+            [banExpiration, targetId]
+        );
+        console.log('Usuario baneado con éxito:', { targetUsername, duration });
+        res.json({ success: true, message: `Usuario ${targetUsername} baneado` });
+    } catch (error) {
+        console.error('Error al banear usuario:', error);
+        res.status(500).json({ error: 'Error al banear usuario', details: error.message });
+    }
+});
+
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
+    // Crear/modificar tablas al iniciar el servidor
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                profilePicture VARCHAR(255),
+                role VARCHAR(20) DEFAULT 'user',
+                is_banned BOOLEAN DEFAULT FALSE,
+                ban_expiration TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user',
+            ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS ban_expiration TIMESTAMP
+        `);
+        console.log('Tablas verificadas/creadas al iniciar el servidor');
+    } catch (error) {
+        console.error('Error al verificar/crear tablas al iniciar:', error);
+    }
 });
